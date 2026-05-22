@@ -50,6 +50,10 @@ struct ContentView: View {
                     .disabled(!model.isConnected)
                     .help("When enabled, keyboard and mouse events over the video are forwarded to the ESP32.")
 
+                Toggle("⌘↔⌃", isOn: $model.swapCmdCtrl)
+                    .toggleStyle(.button)
+                    .help("Swap host Cmd and Ctrl when sending modifiers. Enable for Linux/Windows targets so ⌘C/⌘V behave as Ctrl+C/Ctrl+V.")
+
                 Button(model.isPasting ? "Pasting…" : "Paste to Target") {
                     model.pasteFromClipboard()
                 }
@@ -81,7 +85,7 @@ struct ContentView: View {
             }
 
             ZStack {
-                CapturePreviewView(session: model.capture.session)
+                CapturePreviewView(displayLayer: model.capture.displayLayer)
                     .background(Color.black)
 
                 // Transparent input layer to receive NSEvents

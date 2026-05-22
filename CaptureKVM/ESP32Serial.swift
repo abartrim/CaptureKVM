@@ -6,8 +6,15 @@ private let serialLog = Logger(subsystem: "Trustonica.CaptureKVM", category: "ES
 
 final class ESP32Serial {
     private var fd: Int32 = -1
+    private(set) var negotiatedBaud: Int = 0
     var onConnectionChanged: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
+
+    // Tried high-to-low. The firmware writes a single 0xAA back when it sees a
+    // FRAME_TYPE_PING (0x80) frame; whichever baud the pong arrives on, we keep.
+    private static let baudCandidates: [Int] = [921600, 460800, 230400, 115200]
+    private static let pongByte: UInt8 = 0xAA
+    private static let probeTimeoutMs: Int = 150
 
     static func availablePorts() -> [String] {
         let patterns = ["/dev/cu.usb*", "/dev/cu.SLAB*", "/dev/cu.wchusbserial*"]
@@ -31,6 +38,7 @@ final class ESP32Serial {
             onError?(msg)
             return
         }
+
         var tio = termios()
         if tcgetattr(fd, &tio) != 0 {
             let err = errno
@@ -41,25 +49,46 @@ final class ESP32Serial {
             return
         }
         cfmakeraw(&tio)
-        cfsetispeed(&tio, speed_t(B115200))
-        cfsetospeed(&tio, speed_t(B115200))
         tio.c_cflag |= (tcflag_t(CLOCAL) | tcflag_t(CREAD))
         tio.c_cflag &= ~tcflag_t(CRTSCTS)
-        if tcsetattr(fd, TCSANOW, &tio) != 0 {
-            let err = errno
-            let msg = "tcsetattr failed: errno=\(err) (\(String(cString: strerror(err))))"
-            serialLog.error("\(msg, privacy: .public)")
-            onError?(msg)
-            close(fd)
-            return
+
+        // Build a single COBS+CRC8 ping frame; reused at every baud attempt.
+        let pingFrame = HIDEncoder.frame(type: 0x80, payload: [])
+
+        for baud in ESP32Serial.baudCandidates {
+            cfsetispeed(&tio, speed_t(baud))
+            cfsetospeed(&tio, speed_t(baud))
+            if tcsetattr(fd, TCSANOW, &tio) != 0 { continue }
+            // Discard any garbage that arrived at the previous baud.
+            tcflush(fd, TCIOFLUSH)
+
+            pingFrame.withUnsafeBytes { buf in
+                _ = Darwin.write(fd, buf.baseAddress, buf.count)
+            }
+
+            if waitForPong(fd: fd, timeoutMs: ESP32Serial.probeTimeoutMs) {
+                self.fd = fd
+                self.negotiatedBaud = baud
+                serialLog.info("connected to \(path, privacy: .public) at \(baud) baud")
+                onConnectionChanged?(true)
+                return
+            }
         }
-        self.fd = fd
-        serialLog.info("connect succeeded fd=\(fd)")
-        onConnectionChanged?(true)
+
+        // All bauds failed.
+        let msg = "No response from ESP32 at any baud. Confirm firmware is flashed and matches this app version."
+        serialLog.error("\(msg, privacy: .public)")
+        onError?(msg)
+        close(fd)
     }
 
     func disconnect() {
-        if fd >= 0 { close(fd); fd = -1; onConnectionChanged?(false) }
+        if fd >= 0 {
+            close(fd)
+            fd = -1
+            negotiatedBaud = 0
+            onConnectionChanged?(false)
+        }
     }
 
     func send(frame: Data) {
@@ -67,6 +96,19 @@ final class ESP32Serial {
         frame.withUnsafeBytes { buf in
             _ = write(fd, buf.baseAddress, buf.count)
         }
+    }
+
+    /// Polls the fd for `pongByte` until timeout. Non-blocking reads + short usleep keep CPU low.
+    private func waitForPong(fd: Int32, timeoutMs: Int) -> Bool {
+        let deadline = Date().addingTimeInterval(TimeInterval(timeoutMs) / 1000.0)
+        var byte: UInt8 = 0
+        while Date() < deadline {
+            let n = Darwin.read(fd, &byte, 1)
+            if n == 1 && byte == ESP32Serial.pongByte { return true }
+            if n < 0 && errno != EAGAIN { return false }
+            usleep(2000) // 2 ms
+        }
+        return false
     }
 }
 

@@ -8,19 +8,24 @@
 #endif
 
 // Board notes (ESP32-S3-DevKitC "Dual Type-C" variant):
-// - Mac (control host) plugs into the "COM" port -> USB-UART bridge chip -> UART0 (115200 baud).
+// - Mac (control host) plugs into the "COM" port -> USB-UART bridge chip -> UART0.
 // - Target machine plugs into the "USB" port -> native USB OTG -> enumerates as HID KB+MS.
-// - Control frames arrive over UART0; HID reports go out over native USB to the target.
+// - Control frames arrive over UART0 at kUartBaud; HID reports go out over native USB.
 // - The host sends HID usages directly; this sketch does not translate keycodes.
+// - The host probes baud rates via frame type 0x80 (ping); we reply with a single 0xAA
+//   byte on UART so the host's baud-negotiation can settle on the highest working rate.
 
 namespace {
 
 constexpr size_t kMaxEncodedFrameSize = 32;
 constexpr size_t kMaxDecodedFrameSize = 16;
+constexpr uint32_t kUartBaud = 921600;  // Highest supported by CP2102N / CH343 on the dev kit.
+constexpr uint8_t kPongByte = 0xAA;     // Response to a FRAME_TYPE_PING for baud negotiation.
 
 enum FrameType : uint8_t {
   FRAME_TYPE_KEYBOARD_BOOT = 0x01,
   FRAME_TYPE_MOUSE_BOOT = 0x02,
+  FRAME_TYPE_PING = 0x80,
 };
 
 HardwareSerial gUartLink(0);  // UART0 -> USB-UART bridge -> Mac on the "COM" port
@@ -101,7 +106,8 @@ void sendMouseReport(const uint8_t *reportBytes) {
 }
 
 void handleDecodedFrame(const uint8_t *decoded, size_t decodedLength) {
-  if (decodedLength < 3) {
+  // Minimum frame: 1 type byte + 1 CRC byte. Empty-payload frames (e.g., ping) are valid.
+  if (decodedLength < 2) {
     return;
   }
   const uint8_t frameCrc = decoded[decodedLength - 1U];
@@ -126,6 +132,12 @@ void handleDecodedFrame(const uint8_t *decoded, size_t decodedLength) {
         sendMouseReport(reportBytes);
         dispatched = true;
       }
+      break;
+    case FRAME_TYPE_PING:
+      // Reply with a single byte so the host can confirm UART baud is correct.
+      gUartLink.write(kPongByte);
+      gUartLink.flush();
+      dispatched = true;
       break;
     default:
       break;
@@ -214,7 +226,7 @@ void setup() {
   rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
 #endif
 
-  gUartLink.begin(115200);
+  gUartLink.begin(kUartBaud);
 
   // Identify the device cleanly so lsusb / IORegistry show useful names.
   USB.VID(0xCAFE);

@@ -20,6 +20,11 @@ final class AppModel: ObservableObject {
     // Input capture toggle
     @Published var captureInput: Bool = false
 
+    // Map host ⌘ to target Ctrl and host ⌃ to target Super. Useful for non-Mac targets.
+    @Published var swapCmdCtrl: Bool = (UserDefaults.standard.object(forKey: "swapCmdCtrl") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(swapCmdCtrl, forKey: "swapCmdCtrl") }
+    }
+
     // Managers
     let capture = CaptureManager()
     let serial = ESP32Serial()
@@ -66,7 +71,12 @@ final class AppModel: ObservableObject {
     // MARK: - UI helpers
     var captureStatusOK: Bool { capture.isRunning }
     var captureStatusText: String { capture.isRunning ? "Video OK" : "No Video" }
-    var serialStatusText: String { isConnected ? "ESP32 Connected" : "ESP32 Disconnected" }
+    var serialStatusText: String {
+        if isConnected {
+            return serial.negotiatedBaud > 0 ? "ESP32 @ \(serial.negotiatedBaud)" : "ESP32 Connected"
+        }
+        return "ESP32 Disconnected"
+    }
 
     // MARK: - Video
     func refreshDevices() {
@@ -150,10 +160,16 @@ final class AppModel: ObservableObject {
         guard captureInput else { return }
         let flags = event.modifierFlags
         var mod: UInt8 = 0
-        if flags.contains(.shift)   { mod |= 0x02 }
-        if flags.contains(.control) { mod |= 0x01 }
-        if flags.contains(.option)  { mod |= 0x04 }
-        if flags.contains(.command) { mod |= 0x08 }
+        if flags.contains(.shift)  { mod |= 0x02 }
+        if flags.contains(.option) { mod |= 0x04 }
+        if swapCmdCtrl {
+            // Cross-OS friendly: host ⌘ -> target Ctrl, host ⌃ -> target Super.
+            if flags.contains(.command) { mod |= 0x01 }
+            if flags.contains(.control) { mod |= 0x08 }
+        } else {
+            if flags.contains(.control) { mod |= 0x01 }
+            if flags.contains(.command) { mod |= 0x08 }
+        }
         modifiers = mod
         sendKeyboard()
     }
@@ -231,7 +247,9 @@ final class AppModel: ObservableObject {
 
     private func setupMouseTimer() {
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + .milliseconds(10), repeating: .milliseconds(10))
+        // 4 ms ≈ 250 Hz, just above typical mouse polling rates; lower than this
+        // would saturate the boot HID 1 ms polling interval on the target.
+        timer.schedule(deadline: .now() + .milliseconds(4), repeating: .milliseconds(4))
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             guard self.captureInput else { return }
