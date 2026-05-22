@@ -23,7 +23,7 @@ A do-it-yourself KVM for your Mac. See and control any headless or remote machin
 - **Control** the target with your Mac's keyboard and mouse.
 - **Paste** text from your Mac's clipboard into the target.
 - Works on **BIOS, fresh installs, locked screens** — anywhere a USB keyboard + mouse would.
-- Connect to the bridge over **USB or Bluetooth Low Energy**.
+- Connect to the bridge over **USB Serial** (wired, lowest latency) or **Bluetooth Low Energy** (wireless, encrypted, PIN-paired). Pair once and macOS reconnects silently. Or turn the radio off entirely for hardware-only mode.
 
 ## Quick start
 
@@ -54,9 +54,26 @@ That's it.
 
 ### Connecting
 
-The toolbar has a **Link** picker — choose **USB Serial** (lowest latency, wired) or **Bluetooth** (wireless, requires one-time pairing). Then pick the device in the right-hand dropdown and click **Connect**.
+The toolbar has a **Link** picker:
 
-For Bluetooth, the firmware uses a per-device random 6-digit PIN. To see it: connect once via USB Serial, then open **Settings → Bluetooth**. The PIN is shown there. macOS will prompt for it the first time you connect via Bluetooth.
+- **USB Serial** — lowest latency, wired. Just plug the ESP32's COM port into your Mac and click Connect.
+- **Bluetooth Low Energy** — wireless. Requires one-time pairing with a 6-digit PIN; afterwards macOS reconnects silently.
+
+Pick a device in the right-hand dropdown and click **Connect**.
+
+### Bluetooth — one-time setup
+
+The ESP32 generates a random 6-digit PIN on first boot, stored permanently on the board. Pairing uses **LE Secure Connections** with that PIN. The bridge is locked down: only paired Macs can write to it, so nobody else in BLE range can sniff or inject input.
+
+1. **Connect once over USB Serial.** This is the only way to read the bridge's PIN — physical access required.
+2. Open **Settings (⌘,) → Bluetooth**. You'll see the **PIN** (e.g. `277481`) with a green **Live** badge. Memorise it or copy it.
+3. Click **Switch to Bluetooth & start pairing**. The app disconnects USB, switches Link to Bluetooth, scans, and auto-selects the first KVM bridge it sees.
+4. Click **Connect** in the main toolbar. macOS pops a system pairing dialog asking for the 6-digit code — type the PIN.
+5. Done. The bond is persisted in macOS' keychain; future BLE connects are silent.
+
+Want to revoke pairing or rotate the PIN? Reconnect over USB Serial and hit **Rotate PIN** in Settings → Bluetooth. All existing bonds are cleared on the bridge side.
+
+Want zero wireless attack surface? Reconnect over USB Serial and flip **BLE radio enabled** off in Settings → Bluetooth. The radio shuts down completely; only the wired link controls the bridge from then on. The setting persists across reboots.
 
 ### Controlling
 
@@ -86,6 +103,9 @@ Open the app and hit **⌘?** for a full in-app help window covering pairing, ho
 | Function keys do nothing on the target | macOS swallows F-keys for system functions by default. Press **fn + F-key**, or enable *Use F1, F2, etc. as standard function keys* in System Settings → Keyboard. |
 | `Cmd+C` / `Cmd+V` don't copy/paste on a Linux/Windows target | Open Settings → Keyboard; make sure **Swap ⌘↔⌃** is enabled (it is by default). |
 | Pasted text drops characters | Paste is synthesized keystrokes at ~60 chars/sec. Make sure the target focus is on a text field; non-ASCII characters are silently skipped. |
+| ESP32 doesn't appear in the Bluetooth dropdown | Make sure the LED isn't a slow red blink (target not enumerated → power issue). Click **Switch to Bluetooth & start pairing** from Settings → Bluetooth — that scan finds it within ~2 seconds. As a last resort: `sudo pkill bluetoothd` to flush macOS' BT cache, then relaunch the app. |
+| Bluetooth pairing prompt never appears | The first time you connect via BLE, macOS pops a *system* dialog (often as a notification banner) — sometimes it's hidden behind another window. Look in the top-right notifications, or click the BT icon in the menu bar. |
+| Bluetooth was working, now connect fails | Your old bond may be stale (e.g. after a Rotate PIN). In Settings → Bluetooth, rotate the PIN again to clear bonds on the bridge side; on the Mac, **System Settings → Bluetooth → ⓘ next to KVM-XXXX → Forget This Device**, then re-pair. |
 
 ## Going deeper
 
