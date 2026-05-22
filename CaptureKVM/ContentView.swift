@@ -98,9 +98,13 @@ struct ContentView: View {
                     onMouseButton: { down, button in model.handleMouseButton(down: down, button: button) },
                     onScroll: { dx, dy in model.handleScroll(dx: dx, dy: dy) },
                     onEscapeRelease: { model.captureInput = false },
-                    onPasteFromHost: { model.pasteFromClipboard() }
+                    onPasteFromHost: { model.pasteFromClipboard() },
+                    onActivateCapture: {
+                        guard model.isConnected else { return }
+                        model.captureInput = true
+                    }
                 )
-                .allowsHitTesting(model.captureInput) // Only intercept when active
+                .allowsHitTesting(model.isConnected) // Hit-test when connected; the view decides whether to activate or forward
             }
             .frame(minHeight: 360)
             .onAppear {

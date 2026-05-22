@@ -11,6 +11,7 @@ struct InputForwarderView: NSViewRepresentable {
     var onScroll: (CGFloat, CGFloat) -> Void
     var onEscapeRelease: () -> Void
     var onPasteFromHost: () -> Void
+    var onActivateCapture: () -> Void
 
     func makeNSView(context: Context) -> ForwarderView {
         let v = ForwarderView()
@@ -22,6 +23,7 @@ struct InputForwarderView: NSViewRepresentable {
         v.onScroll = onScroll
         v.onEscapeRelease = onEscapeRelease
         v.onPasteFromHost = onPasteFromHost
+        v.onActivateCapture = onActivateCapture
         return v
     }
 
@@ -43,6 +45,7 @@ struct InputForwarderView: NSViewRepresentable {
         var onScroll: ((CGFloat, CGFloat) -> Void)?
         var onEscapeRelease: (() -> Void)?
         var onPasteFromHost: (() -> Void)?
+        var onActivateCapture: (() -> Void)?
 
         private var trackingArea: NSTrackingArea?
         private var cursorCaptured: Bool = false
@@ -150,11 +153,31 @@ struct InputForwarderView: NSViewRepresentable {
             onScroll?(event.scrollingDeltaX, event.scrollingDeltaY)
         }
 
-        override func mouseDown(with event: NSEvent) { onMouseButton?(true, 1) }
-        override func mouseUp(with event: NSEvent) { onMouseButton?(false, 1) }
-        override func rightMouseDown(with event: NSEvent) { onMouseButton?(true, 2) }
-        override func rightMouseUp(with event: NSEvent) { onMouseButton?(false, 2) }
-        override func otherMouseDown(with event: NSEvent) { onMouseButton?(true, 3) }
-        override func otherMouseUp(with event: NSEvent) { onMouseButton?(false, 3) }
+        // If we're not yet capturing, the first click activates capture and is consumed
+        // (not forwarded to the target). Subsequent clicks pass through normally.
+        override func mouseDown(with event: NSEvent) {
+            if !isActive { onActivateCapture?(); return }
+            onMouseButton?(true, 1)
+        }
+        override func mouseUp(with event: NSEvent) {
+            guard isActive else { return }
+            onMouseButton?(false, 1)
+        }
+        override func rightMouseDown(with event: NSEvent) {
+            if !isActive { onActivateCapture?(); return }
+            onMouseButton?(true, 2)
+        }
+        override func rightMouseUp(with event: NSEvent) {
+            guard isActive else { return }
+            onMouseButton?(false, 2)
+        }
+        override func otherMouseDown(with event: NSEvent) {
+            if !isActive { onActivateCapture?(); return }
+            onMouseButton?(true, 3)
+        }
+        override func otherMouseUp(with event: NSEvent) {
+            guard isActive else { return }
+            onMouseButton?(false, 3)
+        }
     }
 }
