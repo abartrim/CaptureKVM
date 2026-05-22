@@ -90,9 +90,14 @@ final class FirmwareFlasher: ObservableObject {
             "--after", "hard_reset",
             "write_flash",
             "-z",
-            "--flash_mode", "qio",
-            "--flash_freq", "80m",
-            "--flash_size", "8MB",
+            // CRITICAL: use "keep" so esptool preserves whatever flash mode /
+            // freq / size are baked into our bundled .bin headers. Hard-coding
+            // "qio" here would patch the bootloader header to say QIO regardless
+            // of what the bootloader was actually built for, bricking any board
+            // whose flash chip can't run QIO.
+            "--flash_mode", "keep",
+            "--flash_freq", "keep",
+            "--flash_size", "keep",
             "0x0",     bootloader.path,
             "0x8000",  partitions.path,
             "0xe000",  bootApp0.path,
