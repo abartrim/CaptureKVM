@@ -45,12 +45,16 @@ That's it.
 | | Item | Notes / where to get |
 | --- | --- | --- |
 | 🧠 | **ESP32-S3-DevKitC "Dual Type-C" board** | Any flash size from 4 MB to 16 MB; PSRAM is *not* required. Look for boards labelled "ESP32-S3 Dev Kit C" with **two USB-C connectors** (one labelled `USB`, one labelled `COM` or `UART`). Available on [AliExpress](https://www.aliexpress.com/wholesale?SearchText=ESP32-S3+dual+type-c), [Amazon](https://www.amazon.com/s?k=esp32-s3+dual+type-c+devkit), or any Espressif reseller. Around $10–15. |
-| 🎥 | **USB-C UVC video capture card** | Any generic "USB-C HDMI capture" stick works. Look for "1080p UVC" in the listing. ~$15–30. |
+| 🎥 | **USB-C UVC video capture card** | I use the [Guermok 4K USB3.0 HDMI to USB-C](https://www.amazon.com/dp/B08Z3XDYQ7), 1080p60. Any generic UVC capture stick should work; ~$15–30. |
 | 🔌 | **Two USB-C data cables** | One for Mac↔ESP32 ("COM" port), one for ESP32 ("USB" port) ↔ target. Charge-only cables won't work — make sure they're **data** cables. |
 | 📺 | **Cable from target video out → capture card** | Usually HDMI-to-HDMI; sometimes HDMI-to-USB-C if the target has a USB-C display output. |
 | 💻 | **A Mac running macOS 15 (Sequoia) or newer** | The pre-built app targets macOS 26.5; if you need an older OS, build from source (see [BUILDING.md](BUILDING.md)). |
 
 > **Tip:** You can run the bridge from any ESP32-S3 board with native USB OTG, even ones with only a single USB-C connector — you'd just need to manually pair flashing/control on one cable and HID on the other via a hub. Boards with the dual-USB-C layout make it plug-and-play.
+
+### Printable case (optional)
+
+[`ESP32KVMFirmware/ESP32-S3 Dual USB-C Case.3mf`](ESP32KVMFirmware/ESP32-S3%20Dual%20USB-C%20Case.3mf) is a tidy print-in-place case for the board. Original design by the [ESP32-S3-DevKitC pins and no pins case](https://makerworld.com/en/models/551019-esp32-s3-devkitc-pins-and-no-pins-case) on MakerWorld — please visit the MakerWorld page for the designer credit + license terms (download the original from there if you intend to remix or redistribute it).
 
 ## Using the app
 

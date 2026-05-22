@@ -40,6 +40,16 @@ contain statically-linked code from the following projects:
 - License: **MIT License**
 - Copyright © 2018, hathach (tinyusb.org).
 
+## Third-party hardware design (optional, not embedded in any executable)
+
+### ESP32-S3-DevKitC "pins and no pins" case
+- A `.3mf` file for a 3D-printable case ships in `ESP32KVMFirmware/`.
+- Original design: <https://makerworld.com/en/models/551019-esp32-s3-devkitc-pins-and-no-pins-case>
+- License: as specified by the designer on the MakerWorld page. Visit the link
+  for the canonical version and the original creator's attribution + license
+  terms. The bundled `.3mf` is a convenience copy; if you remix or redistribute
+  it, do so according to the original license.
+
 ---
 
 Full license texts for each project are available at the upstream URLs listed
