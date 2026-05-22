@@ -119,4 +119,6 @@ If you want to build the app from source, modify the firmware, or just understan
 
 ## License
 
-No license currently specified. If you intend to use or redistribute this, add a license file appropriate to your needs.
+CaptureKVM is licensed under the **GNU General Public License v3.0**. See [LICENSE](LICENSE) for the full text. If you modify and distribute it (or anything based on it), you have to share your modifications under GPL v3 too — that's the deal.
+
+[NOTICE.md](NOTICE.md) lists the third-party software bundled or statically linked into the project (`esptool`, Arduino-ESP32, NimBLE-Arduino, TinyUSB) with their respective licenses and copyright holders.

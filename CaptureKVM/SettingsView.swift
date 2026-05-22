@@ -56,7 +56,7 @@ struct SettingsView: View {
             Section {
                 pairBluetoothButton
             } header: { Text("Pair with Bluetooth") } footer: {
-                Text("Orchestrates the full pairing flow: disconnects USB, switches the Link to Bluetooth, starts scanning, and auto-selects the first KVM bridge it sees. When the Mac connects, macOS will pop a system dialog asking for the 6-digit PIN above.")
+                Text("Disconnects USB, copies the PIN to your clipboard, switches the Link to Bluetooth, scans, auto-selects the first KVM bridge, and initiates the connection — which triggers macOS' pairing dialog. Just paste the PIN (⌘V) in the dialog. If you rotated the PIN, you may need to **Forget** the device in System Settings → Bluetooth first so macOS doesn't try to use the stale bond.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -79,6 +79,16 @@ struct SettingsView: View {
                 Text(model.blePIN.isEmpty ? "—" : model.blePIN)
                     .font(.system(.title3, design: .monospaced).weight(.semibold))
                     .textSelection(.enabled)
+                if !model.blePIN.isEmpty {
+                    Button {
+                        model.copyPinToClipboard()
+                    } label: {
+                        Image(systemName: model.pinCopiedToClipboard ? "checkmark.circle.fill" : "doc.on.doc")
+                            .foregroundStyle(model.pinCopiedToClipboard ? .green : .secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy PIN to clipboard so it's ready to paste into macOS' pairing prompt.")
+                }
                 statusBadge
             }
         }

@@ -57,9 +57,14 @@ struct HelpView: View {
 
                 section("Bluetooth pairing flow (one-shot)") {
                     bullet("Connect via **USB Serial** once. The Bluetooth tab in Settings will then show the **PIN** with a green \"Live\" badge.")
-                    bullet("Click **Switch to Bluetooth & start pairing** in Settings → Bluetooth. The app disconnects USB, switches Link to Bluetooth, scans, and auto-selects the first KVM bridge it sees.")
-                    bullet("Click **Connect** in the main toolbar. macOS pops a system pairing dialog asking for the 6-digit code; type the PIN that's shown in Settings.")
+                    bullet("Click **Switch to Bluetooth & start pairing** in Settings → Bluetooth. The app copies the PIN to your clipboard, disconnects USB, switches Link to Bluetooth, scans, auto-selects the first KVM bridge, and initiates the connection.")
+                    bullet("macOS pops a system pairing dialog asking for the 6-digit code. **Paste** (⌘V) — the PIN is already on the clipboard.")
                     bullet("Done — the bond is persisted in macOS' keychain. Future BLE connects don't re-prompt.")
+                }
+
+                section("If you rotated the PIN") {
+                    bullet("Rotate PIN clears the firmware's bonds but **macOS still keeps the old bond**. The next BLE connect will fail because the keys don't match.")
+                    bullet("Workaround: **System Settings → Bluetooth → ⓘ next to KVM-XXXX → Forget This Device**, then run the pair flow again. The new PIN is already on your clipboard if you used Rotate PIN in our Settings.")
                 }
 
                 section("PIN status badge") {
@@ -102,6 +107,14 @@ struct HelpView: View {
                     bullet("Pick the ESP32's COM (USB-UART bridge) port from the dropdown.")
                     bullet("Click **Flash bundled firmware**. The app closes any existing serial connection, runs the bundled `esptool` against the port, and reports progress. Takes about 10 seconds.")
                     bullet("When it's done the ESP32 hard-resets and the new firmware is live.")
+                }
+
+                section("License + credits") {
+                    Text("CaptureKVM is licensed under **GNU General Public License v3**. Source code, NOTICE file, and the full license text live in the project's GitHub repository.")
+                    bullet("[esptool](https://github.com/espressif/esptool) by Espressif — bundled inside the app, used for in-app firmware flashing. GPL v2+.")
+                    bullet("[Arduino-ESP32](https://github.com/espressif/arduino-esp32) by Espressif — linked into the bundled firmware. Apache 2.0.")
+                    bullet("[NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino) by h2zero — Bluetooth host stack in the firmware. Apache 2.0.")
+                    bullet("[TinyUSB](https://github.com/hathach/tinyusb) by hathach — USB device stack in the firmware. MIT.")
                 }
 
                 section("Want to build or modify the firmware?") {

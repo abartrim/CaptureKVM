@@ -114,16 +114,43 @@ final class VideoOutputDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferD
 struct CapturePreviewView: NSViewRepresentable {
     let displayLayer: AVSampleBufferDisplayLayer
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer = displayLayer
-        return view
+    func makeNSView(context: Context) -> PreviewHostView {
+        PreviewHostView(displayLayer: displayLayer)
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        if nsView.layer !== displayLayer {
-            nsView.layer = displayLayer
+    func updateNSView(_ nsView: PreviewHostView, context: Context) {
+        nsView.adopt(displayLayer)
+    }
+
+    /// NSView in *layer-hosting* mode (its backing layer IS the
+    /// AVSampleBufferDisplayLayer). AppKit doesn't auto-resize the backing layer
+    /// when the view's bounds change in this mode, so `layout()` does it manually.
+    /// Without this, the video stays at its original size after a window Zoom
+    /// (green button) until the user nudges the window edge by hand.
+    final class PreviewHostView: NSView {
+        private var hosted: AVSampleBufferDisplayLayer
+
+        init(displayLayer: AVSampleBufferDisplayLayer) {
+            self.hosted = displayLayer
+            super.init(frame: .zero)
+            wantsLayer = true
+            layer = displayLayer
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) unused") }
+
+        func adopt(_ newLayer: AVSampleBufferDisplayLayer) {
+            guard hosted !== newLayer else { return }
+            hosted = newLayer
+            layer = newLayer
+            needsLayout = true
+        }
+
+        override var isFlipped: Bool { false }
+
+        override func layout() {
+            super.layout()
+            hosted.frame = bounds
         }
     }
 }

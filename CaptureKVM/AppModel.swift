@@ -23,10 +23,26 @@ final class AppModel: ObservableObject {
 
     // Transport selection + Bluetooth
     @Published var transportKind: TransportKind = TransportKind(rawValue: UserDefaults.standard.string(forKey: "transportKind") ?? "") ?? .usbSerial {
-        didSet { UserDefaults.standard.set(transportKind.rawValue, forKey: "transportKind") }
+        didSet {
+            // Switching transports drops any live connection on the OLD transport so
+            // isConnected always reflects the currently-selected transport's state.
+            // Otherwise the selectors in the toolbar + Settings desync (e.g. user
+            // disconnects BLE, switches to USB Serial, but bluetooth.isConnected is
+            // still true from a previous attempt).
+            if oldValue != transportKind {
+                switch oldValue {
+                case .usbSerial: if serial.isConnected { serial.disconnect() }
+                case .bluetooth: if bluetooth.isConnected { bluetooth.disconnect() }
+                }
+            }
+            UserDefaults.standard.set(transportKind.rawValue, forKey: "transportKind")
+        }
     }
     @Published var blePeripherals: [BLEPeripheralInfo] = []
     @Published var selectedBLEPeripheralID: UUID? = nil
+    /// When true, the next discovered KVM peripheral auto-connects (used by
+    /// the Settings "Switch to Bluetooth & start pairing" orchestrator).
+    private var pairingFlowActive: Bool = false
 
     // Paste-from-host state
     @Published var isPasting: Bool = false
@@ -36,6 +52,13 @@ final class AppModel: ObservableObject {
     @Published var blePIN: String = (UserDefaults.standard.string(forKey: "lastBlePIN") ?? "") {
         didSet { UserDefaults.standard.set(blePIN, forKey: "lastBlePIN") }
     }
+    /// True for a few seconds after the PIN was just copied to the clipboard
+    /// (e.g. after Rotate PIN or starting the pair flow). UI uses this to show
+    /// a transient "Copied" badge.
+    @Published var pinCopiedToClipboard: Bool = false
+    /// True when a rotate is pending and the next PIN we receive should be
+    /// auto-copied to the clipboard.
+    private var copyPinOnNextResponse: Bool = false
     /// True when blePIN was set by the live firmware (via GET_STATE) during this session.
     /// False if the value is just the cached one from a previous session.
     @Published var blePinIsLive: Bool = false
@@ -110,7 +133,15 @@ final class AppModel: ObservableObject {
         }
         serial.onError = errHandler
         serial.onPin = { [weak self] pin in
-            DispatchQueue.main.async { self?.blePIN = pin }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.blePIN = pin
+                self.blePinIsLive = true
+                if self.copyPinOnNextResponse {
+                    self.copyPinOnNextResponse = false
+                    self.copyPinToClipboard()
+                }
+            }
         }
         serial.onState = { [weak self] enabled, hidMounted, bleClient, pin, name in
             DispatchQueue.main.async {
@@ -141,6 +172,13 @@ final class AppModel: ObservableObject {
                 // the first KVM-prefixed peripheral so the Connect button arms itself.
                 if self.selectedBLEPeripheralID == nil, let first = list.first {
                     self.selectedBLEPeripheralID = first.id
+                    // If the orchestrator started this scan, also kick off the connect
+                    // so macOS prompts for the PIN immediately. PIN is already on the
+                    // clipboard from startBluetoothPairFlow.
+                    if self.pairingFlowActive {
+                        self.pairingFlowActive = false
+                        self.connect()
+                    }
                 }
             }
         }
@@ -254,9 +292,11 @@ final class AppModel: ObservableObject {
     func requestBlePin()        { sendCommand(0x81) }  // GET_PIN
     func rotateBlePin() {
         // Optimistic clear so the UI doesn't briefly show the old PIN; the new value
-        // will arrive in the follow-up state response.
+        // will arrive in the follow-up state response, and we'll auto-copy it to the
+        // clipboard so the user can paste it into macOS' pairing prompt.
         blePIN = ""
         blePinIsLive = false
+        copyPinOnNextResponse = true
         sendCommand(0x82)
     }
     func setBleRadioEnabled(_ enabled: Bool) {
@@ -269,13 +309,32 @@ final class AppModel: ObservableObject {
     // MARK: - Bluetooth pair orchestration
 
     /// One-shot helper used by the Settings window's "Pair Bluetooth" button.
-    /// Switches the transport to Bluetooth, kicks off a scan, and arms a watch
-    /// that auto-connects to the first discovered KVM bridge.
+    /// - Disconnects whatever's currently connected.
+    /// - Copies the current PIN to the clipboard (so the user can paste it into
+    ///   macOS' pairing prompt without leaving Settings or memorising digits).
+    /// - Switches to the Bluetooth transport.
+    /// - Starts a scan; the discovery handler will auto-select the first KVM
+    ///   bridge it sees and (because we set `pairingFlowActive`) auto-initiate
+    ///   the BLE connect — which is what triggers macOS' pairing dialog.
     func startBluetoothPairFlow() {
         if isConnected { disconnect() }
         selectedBLEPeripheralID = nil
+        if !blePIN.isEmpty { copyPinToClipboard() }
+        pairingFlowActive = true
         transportKind = .bluetooth
         startBLEScan()
+    }
+
+    /// Puts the current PIN on the pasteboard and flips `pinCopiedToClipboard`
+    /// on for 2 s so the Settings UI can show a "Copied" badge.
+    func copyPinToClipboard() {
+        guard !blePIN.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(blePIN, forType: .string)
+        pinCopiedToClipboard = true
+        let work = DispatchWorkItem { [weak self] in self?.pinCopiedToClipboard = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
     }
 
     // MARK: - Input handling
