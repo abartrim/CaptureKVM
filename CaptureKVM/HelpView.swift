@@ -70,11 +70,12 @@ struct HelpView: View {
                 }
 
                 section("ESP32 onboard LED meanings") {
-                    bullet("**Slow green pulse** — USB enumerated by the target, BLE on, no BLE client.")
-                    bullet("**Green + cyan tint** — also a BLE central is connected to the ESP32.")
-                    bullet("**Solid dim green** — Hardware-only mode (BLE radio off). Working as intended.")
-                    bullet("**Fast red blink** — Target hasn't enumerated the USB HID device. Check the USB-C cable from the ESP32's \"USB\" port to the target.")
-                    bullet("**Brief blue flash** — A valid control frame was just decoded (UART or BLE).")
+                    Text("The LED is activity-driven — it stays off while the bridge is idle, so it isn't blinking at you in a dark room. It only lights up when something interesting is happening:")
+                        .font(.callout)
+                    bullet("**Brief dim blue flash** — a valid control frame was just decoded (UART or BLE). Flickers as you type / move the mouse.")
+                    bullet("**Slow dim red blink** — the target hasn't enumerated the USB HID device. Check the cable from the ESP32's \"USB\" port to the target.")
+                    bullet("**Off** — idle. Bridge is fine; the host just isn't sending anything.")
+                    bullet("Mode info (BLE on/off, client connected, etc.) is shown in the app rather than on the LED.")
                 }
 
                 section("Troubleshooting") {

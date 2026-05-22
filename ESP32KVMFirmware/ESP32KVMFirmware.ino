@@ -452,6 +452,12 @@ void blinkLedDiagnostic(uint8_t r, uint8_t g, uint8_t b, int times) {
 
 void updateStatusLed() {
 #ifdef RGB_BUILTIN
+  // Activity-driven LED. Idle state is OFF so the LED isn't blinking at you in
+  // a dark room; the LED only lights when something interesting is happening:
+  //   - Brief dim blue flash for ~50 ms on every accepted control frame.
+  //   - Slow dim red blink while the USB-OTG side isn't enumerated by the target
+  //     (this is the "something is actually wrong" indicator).
+  //   - Otherwise off.
   static uint32_t lastToggleMs = 0;
   static bool blinkOn = false;
   static uint8_t lastR = 255, lastG = 255, lastB = 255;
@@ -460,28 +466,18 @@ void updateStatusLed() {
   const bool usbMounted = USB;
   uint8_t r = 0, g = 0, b = 0;
 
-  if (now < gActivityUntilMs) {
-    b = 32;
-  } else if (usbMounted) {
-    if (gBLEEnabled) {
-      // Normal mode: slow green pulse; tint cyan when a BLE client is connected.
-      if (now - lastToggleMs >= 1000U) {
-        lastToggleMs = now;
-        blinkOn = !blinkOn;
-      }
-      g = blinkOn ? 4 : 0;
-      if (gBLEClientConnected) { b = blinkOn ? 4 : 0; }
-    } else {
-      // Hardware-only mode: solid dim green. Distinct from the pulse but clearly OK.
-      g = 4;
-    }
-  } else {
-    if (now - lastToggleMs >= 250U) {
+  if (!usbMounted) {
+    // Error: target hasn't enumerated us. Slow dim red blink.
+    if (now - lastToggleMs >= 500U) {
       lastToggleMs = now;
       blinkOn = !blinkOn;
     }
-    r = blinkOn ? 12 : 0;
+    r = blinkOn ? 6 : 0;
+  } else if (now < gActivityUntilMs) {
+    // Dim blue flash for the activity window after each valid frame.
+    b = 10;
   }
+  // else: LED off (idle)
 
   if (r != lastR || g != lastG || b != lastB) {
     rgbLedWrite(RGB_BUILTIN, r, g, b);
@@ -525,7 +521,8 @@ void setup() {
                    static_cast<unsigned>(gBLEPasskey));
   gUartLink.flush();
 
-  blinkLedDiagnostic(gBLEEnabled ? 0 : 64, 0, gBLEEnabled ? 64 : 0, 3);
+  // Quick triple-blink on boot: dim blue if BLE came up OK, dim red otherwise.
+  blinkLedDiagnostic(gBLEEnabled ? 0 : 16, 0, gBLEEnabled ? 16 : 0, 3);
 }
 
 void loop() {
