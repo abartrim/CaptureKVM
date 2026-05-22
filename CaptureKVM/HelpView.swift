@@ -10,6 +10,13 @@ struct HelpView: View {
                     Text("CaptureKVM turns a USB-C capture card and an ESP32-S3 into a do-it-yourself KVM. The capture card shows you the target machine's screen; the ESP32 emits keyboard + mouse events to the target over USB HID. The Mac controls the ESP32 via USB serial or Bluetooth Low Energy.")
                 }
 
+                section("Getting started") {
+                    bullet("**Get the board:** ESP32-S3-DevKitC \"Dual Type-C\" — any flash size from 4 MB to 16 MB. Available on AliExpress / Amazon for ~$10–15. Look for two USB-C connectors, one labelled USB and the other labelled COM or UART.")
+                    bullet("**Flash the firmware:** plug the board's COM port into your Mac, open **Settings (⌘,) → Firmware**, pick the port, click **Flash bundled firmware**. ~10 seconds.")
+                    bullet("**Wire it up:** ESP32 \"USB\" port → target machine; target's HDMI → USB-C capture card → your Mac.")
+                    bullet("**Connect:** main window — pick Video device, pick ESP32 serial port, click **Connect**, click the preview to capture input.")
+                }
+
                 section("Hardware wiring") {
                     bullet("USB-C capture card → into the Mac. Pick it in the Video dropdown.")
                     bullet("ESP32 **\"COM\" port** (UART-bridge USB-C) → into the Mac. Used for fast wired control + management.")
@@ -85,6 +92,10 @@ struct HelpView: View {
                     bullet("Pick the ESP32's COM (USB-UART bridge) port from the dropdown.")
                     bullet("Click **Flash bundled firmware**. The app closes any existing serial connection, runs the bundled `esptool` against the port, and reports progress. Takes about 10 seconds.")
                     bullet("When it's done the ESP32 hard-resets and the new firmware is live.")
+                }
+
+                section("Want to build or modify the firmware?") {
+                    Text("See `BUILDING.md` in the project repository for the full build flow — Arduino IDE setup, FQBN settings, the `arduino-cli` one-liner, and how to refresh the firmware artifacts the app bundles for in-app flashing.")
                 }
 
                 section("Troubleshooting") {
