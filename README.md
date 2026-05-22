@@ -2,6 +2,8 @@
 
 A do-it-yourself KVM for your Mac. See and control any headless or remote machine — BIOS screens, headless servers, locked Linux boxes, the works — all from a window on your Mac.
 
+![CaptureKVM running, showing a remoted desktop in the preview window](docs/screenshot.png)
+
 ```
 +---------------------+       +-----------+        +-------------+
 | Target (any OS,     |  HDMI |  USB-C    |  USB-C |             |
