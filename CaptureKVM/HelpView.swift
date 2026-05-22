@@ -76,6 +76,16 @@ struct HelpView: View {
                     Text("macOS reserves F1–F12 for system functions by default. Either press **fn + F-key** so the function key actually reaches our app, or enable **System Settings → Keyboard → Keyboard Shortcuts → Function Keys → \"Use F1, F2, etc. keys as standard function keys\"**.")
                 }
 
+                section("Fullscreen") {
+                    bullet("Hit the green window button (or **⌃⌘F**) to go fullscreen. The video fills the entire screen and the toolbar auto-hides.")
+                    bullet("Slide the cursor to the very top of the screen to bring the toolbar (and the macOS menu bar) back. It auto-hides again after a couple of seconds of no hover.")
+                    bullet("Hover the toolbar itself to keep it visible while you're interacting with it.")
+                }
+
+                section("Capture HUD") {
+                    Text("A small Apple-bezel-style heads-up display pops up briefly each time you toggle Input Capture, showing the release shortcut (**fn + Esc**). It auto-dismisses after ~1.5 s; doesn't interfere with input.")
+                }
+
                 section("ESP32 onboard LED meanings") {
                     Text("The LED is activity-driven — it stays off while the bridge is idle, so it isn't blinking at you in a dark room. It only lights up when something interesting is happening:")
                         .font(.callout)

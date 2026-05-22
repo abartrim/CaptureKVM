@@ -37,6 +37,14 @@ struct SettingsView: View {
     private var bluetoothTab: some View {
         Form {
             Section {
+                usbConnectionRow
+            } header: { Text("USB Serial connection") } footer: {
+                Text("Connect to the bridge over USB Serial right here — no need to bounce back to the main window — so you can read or rotate the PIN, change the radio state, or kick off the pair flow without leaving Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 pinRow
                 rotateButton
             } header: { Text("Pairing PIN") } footer: {
@@ -143,6 +151,30 @@ struct SettingsView: View {
 
     private var canManage: Bool {
         model.isConnected && model.transportKind == .usbSerial
+    }
+
+    private var usbConnectionRow: some View {
+        HStack {
+            Picker("Port", selection: $model.selectedSerialPath) {
+                Text("— Select —").tag("")
+                ForEach(model.serialPorts, id: \.self) { p in Text(p).tag(p) }
+            }
+            .frame(maxWidth: 240)
+            .disabled(canManage)
+
+            Spacer()
+
+            Button(canManage ? "Disconnect" : "Connect") {
+                if canManage {
+                    model.disconnect()
+                } else {
+                    if model.transportKind != .usbSerial { model.transportKind = .usbSerial }
+                    model.connect()
+                }
+            }
+            .disabled(model.selectedSerialPath.isEmpty)
+            .keyboardShortcut(.defaultAction)
+        }
     }
 
     // MARK: - Firmware tab
