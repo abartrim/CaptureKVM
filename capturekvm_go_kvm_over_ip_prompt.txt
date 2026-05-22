@@ -1,0 +1,688 @@
+Task: Add KVM-over-IP support to CaptureKVM using VS Code/Copilot, Go-only implementation
+
+Repository:
+https://github.com/abartrim/CaptureKVM
+
+Goal:
+Extend CaptureKVM with optional KVM-over-IP support while preserving the existing local-first architecture, but use a binary UDP streaming protocol for the hot path because latency matters more than strict reliability.
+
+Current/local model:
+- macOS CaptureKVM app uses a local UVC capture dongle for video.
+- The macOS app renders the freshest frame directly with `AVSampleBufferDisplayLayer` and drops late frames.
+- The macOS app forwards keyboard and mouse state to an ESP32-S3 over USB serial or BLE using tiny binary frames.
+- The ESP32-S3 presents as USB HID keyboard and mouse to the target computer.
+- The current local input path is already latency-oriented:
+  - keyboard sends an 8-byte USB boot keyboard report on every state change
+  - mouse sends a 4-byte USB boot mouse report
+  - mouse deltas are coalesced on a 4 ms timer, about 250 Hz
+  - serial runs at 921600 baud
+  - serial and BLE both carry COBS-framed packets with CRC8
+
+New/remote model:
+- Raspberry Pi or Linux host uses a UVC HDMI capture dongle for video.
+- Raspberry Pi or Linux host runs a new Go-based `capturekvm-agent`.
+- `capturekvm-agent` exposes an authenticated control plane over HTTP, but uses binary UDP for low-latency video and input streaming.
+- Remote clients primarily means the existing macOS app.
+- A browser UI may exist for diagnostics or fallback testing, but it is not the primary low-latency path because browsers cannot participate in the same raw UDP design.
+- Input is forwarded to:
+  1. the existing ESP32-S3 over USB serial, or
+  2. an experimental Raspberry Pi USB gadget HID backend.
+
+Important implementation constraints:
+- Make the new server or agent implementation in Go only.
+- Do not add Python, Node, Rust, Java, or shell-heavy server code.
+- Shell scripts are acceptable only for install or setup helpers and must not contain core server logic.
+- The macOS app remains Swift and macOS as it is today. The new KVM-over-IP agent is Go.
+- Primary deployment target is Ubuntu on Raspberry Pi 4 and newer, including Raspberry Pi 5.
+- macOS is an acceptable development and bring-up host for the Go agent, but not the primary deployment target.
+- Prefer boring, explicit code over large protocol frameworks.
+- Latency is the primary optimization target.
+- Do not add reliable-by-default transport layers on the hot path.
+
+Reference decisions:
+- Do not build a full PiKVM clone.
+- Do not fork TinyPilot or PiKVM.
+- Do not use WebSocket or JSON on the video or live input hot path.
+- Keep HTTP only for setup, auth, session negotiation, health, and status.
+- Use binary UDP datagrams for remote input.
+- Use binary UDP video streaming, ideally H.264 over UDP with minimal buffering.
+- Protect UDP payloads with authenticated encryption.
+- Use AES-256-GCM for v1 so the Swift client can use CryptoKit and the Go agent can use the standard library.
+- Treat AES-GCM as a compatibility choice across macOS and Ubuntu on Raspberry Pi, not as a guaranteed hardware-accelerated choice on every Pi deployment.
+- On macOS Apple silicon, AES-GCM should be hardware-backed.
+- On Ubuntu arm64 Raspberry Pi, detect and log CPU AES and PMULL capability at startup instead of assuming acceleration.
+- Reuse the existing CaptureKVM HID report model instead of inventing a new semantic input schema.
+- Treat the ESP32 serial protocol as the compatibility anchor for the remote agent.
+
+Why:
+- The current app and firmware already optimize for freshest-state-wins behavior rather than reliable ordered delivery.
+- JSON and WebSocket would add encoding, framing, head-of-line blocking, and backpressure behaviors that work against the current low-latency design.
+- The app already uses a rendering path that benefits from compressed video delivered with minimal buffering.
+- The firmware already accepts compact fixed-size HID reports, so the remote protocol should stay equally compact.
+
+Desired high-level architecture:
+
+Local mode:
+  macOS app
+    -> local UVC video source
+    -> local ESP32-S3 serial or BLE HID bridge
+    -> target computer USB HID
+
+Remote mode:
+  target HDMI
+    -> UVC capture dongle
+    -> Raspberry Pi or Linux host
+    -> low-latency encoder or packetizer
+    -> capturekvm-agent
+    -> UDP video stream to macOS CaptureKVM app
+
+  remote keyboard and mouse
+    -> UDP input datagrams from macOS CaptureKVM app
+    -> capturekvm-agent
+    -> HID backend
+       -> ESP32-S3 serial
+       OR
+       -> Raspberry Pi /dev/hidg* USB gadget endpoint
+    -> target computer USB HID
+
+  control and status
+    -> HTTPS or HTTP on trusted LAN or VPN
+    -> session setup, auth, health, stats, backend state
+
+Primary deliverables:
+
+1. Add a Go-only `agent/` directory
+
+Create:
+
+agent/
+  go.mod
+  go.sum
+  cmd/
+    capturekvm-agent/
+      main.go
+  internal/
+    auth/
+      auth.go
+      auth_test.go
+    config/
+      config.go
+      config_test.go
+    control/
+      session.go
+      session_test.go
+    server/
+      server.go
+      routes.go
+      status.go
+      server_test.go
+    udp/
+      packet.go
+      session.go
+      input_receiver.go
+      video_sender.go
+      reassembly.go
+      udp_test.go
+    input/
+      reports.go
+      normalize.go
+      reports_test.go
+    video/
+      encoder.go
+      stream.go
+      stream_test.go
+    hid/
+      backend.go
+      mock.go
+      esp32_serial.go
+      pi_gadget.go
+      reports.go
+      reports_test.go
+  examples/
+    config.example.yaml
+  systemd/
+    capturekvm-agent.service
+  README.md
+
+Use idiomatic Go:
+- `net/http` for the control plane.
+- `net` or `golang.org/x/net` only where actually required for UDP handling.
+- `go.bug.st/serial` or another mature Go serial library for serial transport.
+- `gopkg.in/yaml.v3` or similar only if YAML config is used.
+- Keep dependencies minimal.
+- Avoid dragging in a heavyweight media server when a focused encoder wrapper or subprocess manager is enough.
+
+2. Agent config
+
+Support a YAML or JSON config file.
+
+Example:
+
+server:
+  bind: "0.0.0.0:8080"
+  public_base_url: "http://capturekvm.local:8080"
+
+auth:
+  token: "CHANGE_ME"
+  session_ttl_seconds: 60
+
+crypto:
+  udp_suite: "AES-256-GCM"
+  key_bytes: 32
+  nonce_bytes: 12
+
+udp:
+  bind: "0.0.0.0:8090"
+  public_host: "capturekvm.local"
+  input_port: 8091
+  video_port: 8092
+  mtu: 1200
+  max_reorder_frames: 2
+
+video:
+  source: "/dev/video0"
+  codec: "h264"
+  width: 1280
+  height: 720
+  fps: 60
+  bitrate_kbps: 6000
+  keyframe_interval: 30
+  hardware_encode: true
+  no_b_frames: true
+
+hid:
+  backend: "esp32-serial"
+  esp32_serial:
+    port: "/dev/ttyACM0"
+    baud: 921600
+    auto_reconnect: true
+  pi_gadget:
+    keyboard: "/dev/hidg0"
+    mouse: "/dev/hidg1"
+
+logging:
+  level: "info"
+
+Config requirements:
+- Allow config path via `--config`.
+- Allow environment overrides for:
+  - CAPTUREKVM_BIND
+  - CAPTUREKVM_AUTH_TOKEN
+  - CAPTUREKVM_UDP_BIND
+  - CAPTUREKVM_UDP_PUBLIC_HOST
+  - CAPTUREKVM_HID_BACKEND
+  - CAPTUREKVM_SERIAL_PORT
+  - CAPTUREKVM_VIDEO_SOURCE
+- Fail clearly if auth token is missing unless explicitly running in `--dev-insecure` mode.
+- Never default to unauthenticated network HID input.
+- Default ESP32 serial baud to 921600 to match the current firmware and app.
+- Expose MTU-related settings so packet sizing can be tuned without code changes.
+- Keep one required UDP crypto suite in v1: AES-256-GCM.
+- Do not claim or depend on Raspberry Pi hardware AES acceleration unless the running host reports AES and PMULL support.
+
+3. Control-plane HTTP API
+
+Implement:
+
+GET /health
+Response:
+{
+  "ok": true,
+  "service": "capturekvm-agent",
+  "version": "...",
+  "time": "..."
+}
+
+GET /api/status
+Requires auth.
+Response should include:
+{
+  "ok": true,
+  "version": "...",
+  "udp": {
+    "enabled": true,
+    "input_port": 8091,
+    "video_port": 8092,
+    "mtu": 1200
+  },
+  "video": {
+    "codec": "h264",
+    "width": 1280,
+    "height": 720,
+    "fps": 60,
+    "healthy": true
+  },
+  "hid": {
+    "backend": "esp32-serial",
+    "connected": true,
+    "detail": "..."
+  },
+  "auth": {
+    "enabled": true
+  }
+}
+
+POST /api/session
+Requires auth.
+Purpose:
+- Create a short-lived UDP streaming session for a client.
+- Return negotiated ports, session ID, session key or token, codec info, and protocol version.
+
+Response should include fields similar to:
+{
+  "ok": true,
+  "session_id": "...",
+  "protocol_version": 1,
+  "expires_in_seconds": 60,
+  "crypto": {
+    "udp_suite": "AES-256-GCM",
+    "key_bytes": 32,
+    "nonce_bytes": 12,
+    "session_key": "base64...",
+    "aad_header_bytes": 30
+  },
+  "udp": {
+    "host": "capturekvm.local",
+    "input_port": 8091,
+    "video_port": 8092,
+    "mtu": 1200
+  },
+  "video": {
+    "codec": "h264",
+    "width": 1280,
+    "height": 720,
+    "fps": 60,
+    "format": "annexb"
+  }
+}
+
+POST /api/session/keepalive
+Requires auth.
+Purpose:
+- Refresh a session lease while the macOS client is active.
+
+POST /api/session/close
+Requires auth.
+Purpose:
+- Explicitly end a streaming session.
+
+GET /api/video/source
+Requires auth.
+Purpose:
+- Return current encoder or capture source settings and health.
+
+Do not stream live video over HTTP in the primary path.
+
+4. UDP binary protocol
+
+Implement a compact binary protocol.
+
+General requirements:
+- One UDP datagram is one protocol packet.
+- No JSON on the hot path.
+- Include version, session ID, packet kind, sequence number, monotonic timestamp, and payload length in every packet.
+- Keep headers fixed-size and simple to parse.
+- Keep a small clear header and encrypt only the payload.
+- Authenticate the clear header as additional authenticated data.
+- Use network byte order.
+- Keep packet size below a configurable MTU target, default around 1200 bytes.
+- Never rely on retransmission for interactive input.
+- Prefer drop-late behavior over buffering.
+- Use AES-256-GCM for v1 packet protection.
+- Use CryptoKit `AES.GCM` on the macOS side and Go standard library AES-GCM on the agent side.
+- Derive or construct a unique 96-bit nonce per packet from session-specific data plus direction and sequence number.
+- Reject packets with invalid authentication tags before any payload processing.
+
+Suggested packet header:
+- magic: 4 bytes
+- version: 1 byte
+- packet_kind: 1 byte
+- flags: 2 bytes
+- session_id: 8 bytes
+- seq: 4 bytes
+- timestamp_us: 8 bytes
+- payload_len: 2 bytes
+
+Encryption requirements:
+- Packet form should be `clear_header || ciphertext || gcm_tag`.
+- The clear header must be authenticated as AEAD additional data.
+- Do not use CRC as a security mechanism on UDP packets.
+- The session key is delivered only over the authenticated HTTP control plane.
+- Keep v1 to a single crypto suite so the protocol stays debuggable.
+
+Packet kinds:
+- input_keyboard
+- input_mouse
+- input_ping
+- video_config
+- video_frame
+- video_ping
+- telemetry
+
+5. Input protocol requirements
+
+Do not model remote input as abstract key down or key up JSON events.
+Model it as the same low-level HID reports the local app already emits.
+
+Specifically:
+- Keyboard packets should carry the full 8-byte USB boot keyboard report.
+- Mouse packets should carry the full 4-byte USB boot mouse report.
+- Keep paste as a control-plane action or synthesize it client-side into repeated keyboard reports.
+- Reuse the existing semantics:
+  - frame type `0x01` means keyboard boot report, payload length 8
+  - frame type `0x02` means mouse boot report, payload length 4
+  - frame type `0x80` means ping
+- The ESP32 serial and BLE transport currently use COBS plus CRC8 because they are stream transports.
+- The UDP transport should not wrap packets in COBS.
+- The Go agent should translate UDP input packets into the existing serial frame format when using the ESP32 backend.
+
+Sender behavior:
+- On every keyboard state change, send the full current 8-byte report immediately.
+- While any key is held, periodically resend the current keyboard state at a low backup rate such as 20 to 30 Hz so a dropped packet does not leave keys stuck indefinitely.
+- Coalesce mouse movement like the current app does, approximately every 4 ms.
+- Include current button state in every mouse packet so button state self-heals after loss.
+- Clamp relative mouse deltas to the existing int8 range because that matches the local firmware path.
+- Do not ack every input packet.
+
+Receiver behavior:
+- Apply only packets for the active session.
+- Drop packets older than the newest sequence seen for that packet kind when possible.
+- Maintain simple anti-replay checks inside the current session window.
+- Expose counters for drops, late packets, malformed packets, and active input rate.
+- Fail closed on AEAD authentication failure.
+
+6. Video protocol requirements
+
+The primary remote video path must also be binary over UDP.
+
+Preferred MVP approach:
+- Encode H.264 on the Raspberry Pi or Linux host.
+- Use low-latency encoder settings:
+  - no B-frames
+  - short GOP or frequent keyframes
+  - limited buffering
+  - constant or capped bitrate
+- Packetize encoded bytestream chunks into UDP datagrams with sequence numbers and frame identifiers.
+- Allow frame fragmentation across datagrams.
+- Reassemble only a very small window on the client.
+- Drop incomplete or late frames instead of waiting too long.
+
+Swift client requirements:
+- Decode H.264 using VideoToolbox or AVFoundation-compatible low-latency APIs.
+- Feed decoded frames into the same `AVSampleBufferDisplayLayer` based rendering approach the local path already uses.
+- Preserve the current freshest-frame-wins behavior.
+- Avoid building a deep decode queue.
+
+Go agent requirements:
+- Wrap or manage a practical encoder pipeline, but keep CaptureKVM control logic in Go.
+- If an external encoder process is required, it must be treated as an external runtime dependency and supervised by the Go agent.
+- Do not regress into HTTP MJPEG for the primary macOS path.
+
+If a fallback HTTP or browser video preview is kept for diagnostics, clearly mark it as a secondary, higher-latency path.
+
+7. HID backend interface
+
+Define a Go interface similar to:
+
+type Backend interface {
+    Name() string
+    Open(ctx context.Context) error
+    Close() error
+    Status(ctx context.Context) Status
+    SendKeyboardReport(ctx context.Context, report [8]byte) error
+    SendMouseReport(ctx context.Context, report [4]byte) error
+    Ping(ctx context.Context) error
+}
+
+Implement these backends:
+
+A. mock
+- Logs reports and counters.
+- Used for development and tests.
+- Must be the default when running in dev mode.
+
+B. esp32-serial
+- Opens a serial port.
+- Reuses the existing CaptureKVM ESP32 serial protocol exactly.
+- Document the protocol in `docs/protocol.md`.
+- Support auto-reconnect.
+- Return clear status when disconnected.
+- Do not crash the agent on serial disconnect.
+- Match the current framing behavior:
+  - raw packet is `[type, payload..., crc8]`
+  - then COBS encode it
+  - then append `0x00`
+- Support ping using the existing `0x80` frame and `0xAA` pong behavior.
+
+C. pi-gadget experimental
+- Writes HID reports to `/dev/hidg0`, `/dev/hidg1`, or configured endpoints.
+- Keyboard and mouse report construction should be isolated and tested.
+- If endpoints are missing, backend should fail gracefully with actionable error messages.
+- Do not try to fully configure USB gadget mode in the Go service.
+- Add docs explaining that Pi gadget setup is separate.
+
+8. macOS app remote support
+
+Update the existing app so it supports both local and remote backends.
+
+Add abstraction interfaces or equivalent Swift types:
+- VideoSource
+- InputSink
+- RemoteSessionController
+
+Implement:
+- LocalUVCVideoSource: current behavior.
+- LocalESP32InputSink: current serial and BLE behavior.
+- RemoteUDPVideoSource: receives UDP video packets, reassembles frames, decodes H.264, and renders with the existing display layer approach.
+- RemoteUDPInputSink: sends binary UDP keyboard and mouse reports using the same report model as the local path.
+- RemoteControlAPI: handles auth, status, and session negotiation over HTTP.
+
+Add UI and config:
+- Mode selector:
+  - Local
+  - Remote over IP
+- Remote agent base URL
+- Auth token
+- Connect button
+- Status display:
+  - agent reachable
+  - session active
+  - video receiving
+  - HID backend
+  - measured RTT
+  - packet loss or drop counters
+  - last error
+
+Persist settings locally.
+
+Preserve existing local behavior as the default.
+
+Important Swift implementation notes based on the current codebase:
+- Keep remote keyboard serialization aligned with the existing 8-byte boot report code path.
+- Keep remote mouse serialization aligned with the existing 4-byte boot mouse report code path.
+- Preserve the current 4 ms mouse coalescing timer or equivalent behavior.
+- Avoid input abstractions that convert back into key up or key down messages later.
+- Keep video rendering low-buffer and frame-dropping by design.
+
+9. Browser client
+
+Do not make browser support a blocker for the primary design.
+
+If implemented, keep it explicitly secondary:
+- It may use a debug HTTP preview, MJPEG preview, or a separate compatibility path.
+- It must not redefine the core protocol away from binary UDP.
+- It is acceptable for browser mode to have higher latency and fewer features.
+- It is acceptable to defer browser live input entirely if it compromises the primary low-latency macOS path.
+
+10. Documentation
+
+Add:
+
+docs/kvm-over-ip.md
+Must explain:
+- Architecture.
+- Raspberry Pi setup.
+- Supported baseline target: Ubuntu on Raspberry Pi 4 or newer.
+- Recommended UVC capture dongle flow.
+- Recommended low-latency encoder setup.
+- Starting `capturekvm-agent`.
+- Connecting from the Mac app.
+- How to do local macOS development and smoke testing before deploying to the Pi.
+- Why the primary path uses binary UDP instead of WebSocket or MJPEG.
+- Recommended first video target such as 720p60 or 1080p30 depending on encoder headroom and dongle quality.
+- Cheap UVC capture dongles vary in supported modes, latency, and reliability.
+
+docs/kvm-over-ip-security.md
+Must explain:
+- KVM-over-IP exposes privileged remote control.
+- Do not expose directly to the public internet.
+- Require auth token.
+- Prefer VPN, Tailscale, WireGuard, or a trusted LAN.
+- Consider dedicated VLAN.
+- Clipboard paste is equivalent to typing commands on the target.
+- UDP session tokens must be short-lived.
+- UDP payloads are protected with AES-256-GCM in v1.
+- macOS client support for AES-GCM is straightforward via CryptoKit.
+- Raspberry Pi Ubuntu support is compatible, but hardware acceleration must be detected rather than assumed.
+- This is not a certified secure KVM.
+
+docs/protocol.md
+Must document:
+- Current ESP32 serial protocol.
+- Existing Swift HID report model.
+- UDP packet format.
+- Input packet semantics.
+- Video packet semantics.
+- Session negotiation.
+- How UDP packets map to ESP32 serial frames.
+- Any differences between local serial or BLE transport framing and remote UDP transport framing.
+
+README update:
+- Describe local mode and optional KVM-over-IP mode.
+- Describe Go-only `capturekvm-agent`.
+- Explain that the primary remote path is binary UDP optimized for latency.
+- Mention related projects or prior art only briefly.
+- Do not market CaptureKVM as a secure or certified KVM switch.
+- Avoid claims like "first" or "unique" unless very narrowly scoped.
+
+11. VS Code workflow files
+
+Add VS Code-friendly project support:
+
+.vscode/
+  tasks.json
+  launch.json
+  extensions.json
+
+Tasks should include:
+- Build Go agent.
+- Test Go agent.
+- Run Go agent with example config.
+- Format Go code.
+- Vet Go code.
+
+Do not break existing macOS project workflow.
+
+12. Tests
+
+Add Go tests for:
+- Config loading.
+- Environment overrides.
+- Auth middleware.
+- Session creation and expiry.
+- AES-GCM packet seal and open round trips.
+- AEAD rejection on modified header or ciphertext.
+- Nonce construction uniqueness within a session.
+- UDP packet parsing and validation.
+- Input packet version checks.
+- Input packet replay or stale packet rejection.
+- Mock HID backend.
+- HID report generation for pi-gadget.
+- ESP32 serial message formatting using fake serial transport.
+- Ping and keepalive behavior.
+- Status endpoint.
+
+Add Swift tests where practical for:
+- Remote input packet serialization.
+- Remote settings validation.
+- Session negotiation response parsing.
+- AES-GCM packet open and seal parity with Go fixtures.
+- UDP video packet reassembly.
+- Backend selection.
+
+13. Acceptance criteria
+
+The implementation is complete when:
+
+- Existing local CaptureKVM mode still builds and behaves as before.
+- `agent/` contains a runnable Go `capturekvm-agent`.
+- `go test ./...` passes inside `agent/`.
+- Agent can run with mock HID backend on a development machine.
+- Agent can create an authenticated UDP streaming session.
+- Agent rejects unauthenticated control-plane requests.
+- Agent rejects UDP packets that do not belong to an active session.
+- Agent rejects UDP packets with invalid AEAD tags.
+- Agent accepts authenticated UDP keyboard and mouse reports.
+- Agent can forward reports to ESP32-S3 over serial when configured.
+- Pi gadget backend exists as experimental and fails gracefully when endpoints are absent.
+- macOS app can be configured for a remote agent and send input over UDP.
+- macOS app can receive and render remote UDP video with a low-latency path.
+- Docs include Raspberry Pi setup, security cautions, and protocol notes.
+- No non-Go server implementation is introduced.
+
+14. Suggested first implementation sequence
+
+Use small commits:
+
+Commit 1:
+- Add `agent/` Go module.
+- Add config loading.
+- Add `/health`.
+- Add `/api/status`.
+- Add mock HID backend.
+
+Commit 2:
+- Add auth middleware.
+- Add session creation.
+- Add UDP packet definitions.
+- Add AES-256-GCM packet protection.
+- Add mock UDP input receiver.
+
+Commit 3:
+- Add ESP32 serial backend.
+- Document serial protocol.
+- Add ping and reconnect handling.
+
+Commit 4:
+- Add low-latency video sender.
+- Add client session metadata.
+- Add protocol docs.
+
+Commit 5:
+- Add macOS remote control API.
+- Add remote UDP input sink.
+
+Commit 6:
+- Add macOS remote UDP video source and decode path.
+
+Commit 7:
+- Add experimental Pi gadget backend.
+- Add VS Code tasks.
+- Polish README and security docs.
+
+15. Notes for implementation
+
+- Keep remote mode optional.
+- Do not assume internet exposure.
+- Do local development on macOS first where practical.
+- The Go agent should run on macOS for early development so the already-connected capture card and ESP32 can exercise the control plane, serial backend, and initial UDP protocol before Raspberry Pi integration.
+- Treat Raspberry Pi as the deployment target, not as a prerequisite for starting implementation.
+- Early local macOS testing can use the capture card and ESP32 backend on the same machine, with loopback or LAN UDP endpoints for protocol validation.
+- Prefer wired Ethernet on Raspberry Pi.
+- Favor packet loss tolerance over retransmission.
+- Avoid buffering unless it measurably improves end-to-end latency.
+- Use clear logs because this will be debugged with real capture dongles and serial devices.
+- Use graceful shutdown.
+- Make reconnect behavior robust.
+- Keep the code boring and maintainable.
+- Reuse the current local report model wherever possible instead of adding a second input model.
