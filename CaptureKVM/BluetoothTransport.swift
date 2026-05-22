@@ -61,8 +61,12 @@ final class BluetoothTransport: NSObject, FrameTransport {
         if !central.isScanning {
             discovered.removeAll()
             onDiscoveredPeripheralsChanged?([])
-            central.scanForPeripherals(withServices: [BLEUUIDs.service], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
-            bleLog.info("scan started")
+            // Scan with no service filter so we still find the device when the 128-bit
+            // service UUID is advertised only in the scan-response packet (Apple's
+            // withServices filter only matches the advertising packet itself). We
+            // filter client-side in didDiscover.
+            central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+            bleLog.info("scan started (unfiltered)")
         }
         isScanning = true
     }
@@ -134,6 +138,23 @@ extension BluetoothTransport: CBCentralManagerDelegate {
         let name = peripheral.name
             ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
             ?? "Unknown"
+
+        // Inspect both advertised AND solicited / overflow service UUID slots; some
+        // BLE stacks (incl. ESP32 Arduino-BLE) put the 128-bit UUID in the scan
+        // response rather than the advertising packet.
+        var matchesService = false
+        if let uuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
+            matchesService = uuids.contains(BLEUUIDs.service)
+        }
+        if let uuids = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] {
+            matchesService = matchesService || uuids.contains(BLEUUIDs.service)
+        }
+        // Firmware advertises "KVM-XXXX" (last 4 hex of MAC) so multiple bridges can
+        // be told apart. We also accept the older short forms in case of mixed firmware.
+        let matchesName = name.hasPrefix("KVM-") || name == "KVM" || name == "ESP32 KVM HID Bridge"
+        bleLog.info("discover: name=\(name, privacy: .public) uuid=\(id.uuidString, privacy: .public) matchService=\(matchesService) matchName=\(matchesName)")
+
+        guard matchesService || matchesName else { return }
         discovered[id] = BLEPeripheralInfo(id: id, name: name)
         onDiscoveredPeripheralsChanged?(Array(discovered.values).sorted { $0.name < $1.name })
 

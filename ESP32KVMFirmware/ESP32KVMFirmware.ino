@@ -2,10 +2,7 @@
 #include <USB.h>
 #include <USBHIDKeyboard.h>
 #include <USBHIDMouse.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
+#include <NimBLEDevice.h>
 
 #ifndef ARDUINO_USB_MODE
 #error This sketch requires an ESP32-S2 or ESP32-S3 board with native USB support.
@@ -20,6 +17,9 @@
 // - The host probes baud rates via frame type 0x80 (ping); we reply with a single 0xAA
 //   byte on the same transport so the host's negotiation can settle on the highest
 //   working rate.
+// - BLE stack is h2zero's NimBLE-Arduino library, not the bundled Arduino-ESP32 BLE
+//   (Bluedroid). The bundled stack in arduino-esp32 3.3.7/3.3.8 is broken on macOS/iOS
+//   for custom GATT services (espressif/esp-idf #15578, espressif/arduino-esp32 #12362).
 
 namespace {
 
@@ -32,7 +32,11 @@ constexpr uint8_t kPongByte = 0xAA;
 constexpr const char *kBLEServiceUUID = "c0ffee00-cafe-4001-a001-beefd00dbeef";
 constexpr const char *kBLEFrameWriteUUID = "c0ffee01-cafe-4001-a001-beefd00dbeef";
 constexpr const char *kBLEFrameNotifyUUID = "c0ffee02-cafe-4001-a001-beefd00dbeef";
-constexpr const char *kBLEDeviceName = "ESP32 KVM HID Bridge";
+
+// "KVM-XXXX" at runtime where XXXX is the last 4 hex digits of the chip's
+// eFuse MAC. Short enough to fit in the 31-byte BLE advertising packet
+// alongside the 128-bit service UUID + flags, but unique per device.
+char gBLEDeviceName[16] = "KVM";
 
 enum FrameType : uint8_t {
   FRAME_TYPE_KEYBOARD_BOOT = 0x01,
@@ -46,7 +50,7 @@ HardwareSerial gUartLink(0);
 USBHIDKeyboard gKeyboard;
 USBHIDMouse gMouse;
 
-BLECharacteristic *gNotifyChar = nullptr;
+NimBLECharacteristic *gNotifyChar = nullptr;
 volatile bool gBLEClientConnected = false;
 uint32_t gActivityUntilMs = 0;
 
@@ -120,7 +124,6 @@ void blePong() {
 }
 
 void handleDecodedFrame(const uint8_t *decoded, size_t decodedLength, PongFn pong) {
-  // Minimum frame: 1 type byte + 1 CRC byte. Empty-payload frames (e.g., ping) are valid.
   if (decodedLength < 2) return;
   const uint8_t frameCrc = decoded[decodedLength - 1U];
   const size_t payloadLength = decodedLength - 1U;
@@ -181,53 +184,68 @@ void readUartFrames() {
   }
 }
 
-// BLE callbacks ----------------------------------------------------------
+// BLE callbacks (NimBLE-Arduino API) -----------------------------------------
 
-class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer * /*srv*/) override {
+class ServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer * /*srv*/, NimBLEConnInfo & /*info*/) override {
     gBLEClientConnected = true;
   }
-  void onDisconnect(BLEServer *srv) override {
+  void onDisconnect(NimBLEServer *srv, NimBLEConnInfo & /*info*/, int /*reason*/) override {
     gBLEClientConnected = false;
     // Restart advertising immediately so the host can reconnect.
     srv->getAdvertising()->start();
   }
 };
 
-class FrameWriteCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *c) override {
-    String val = c->getValue();
-    const size_t n = val.length();
-    for (size_t i = 0; i < n; ++i) {
+class FrameWriteCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *c, NimBLEConnInfo & /*info*/) override {
+    std::string val = c->getValue();
+    for (size_t i = 0; i < val.size(); ++i) {
       collectorIngest(gBleCollector, static_cast<uint8_t>(val[i]), blePong);
     }
   }
 };
 
 void setupBLE() {
-  BLEDevice::init(kBLEDeviceName);
-  BLEServer *server = BLEDevice::createServer();
+  const uint64_t mac = ESP.getEfuseMac();
+  const uint16_t suffix = static_cast<uint16_t>(mac & 0xFFFFULL);
+  snprintf(gBLEDeviceName, sizeof(gBLEDeviceName), "KVM-%04X", suffix);
+
+  NimBLEDevice::init(gBLEDeviceName);
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);  // Max TX power for best discoverability.
+
+  NimBLEServer *server = NimBLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
 
-  BLEService *svc = server->createService(kBLEServiceUUID);
-  BLECharacteristic *writeChar = svc->createCharacteristic(
+  NimBLEService *svc = server->createService(kBLEServiceUUID);
+  NimBLECharacteristic *writeChar = svc->createCharacteristic(
       kBLEFrameWriteUUID,
-      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   writeChar->setCallbacks(new FrameWriteCallbacks());
 
   gNotifyChar = svc->createCharacteristic(
       kBLEFrameNotifyUUID,
-      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  gNotifyChar->addDescriptor(new BLE2902());
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
 
   svc->start();
 
-  BLEAdvertising *adv = BLEDevice::getAdvertising();
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(kBLEServiceUUID);
-  adv->setScanResponse(true);
-  adv->setMinPreferred(0x06);  // 7.5 ms interval — low latency
-  adv->setMinPreferred(0x12);
-  BLEDevice::startAdvertising();
+  adv->setName(gBLEDeviceName);
+  adv->enableScanResponse(true);
+  adv->setPreferredParams(0x06, 0x12);  // 7.5 ms .. 22.5 ms preferred connection interval
+  NimBLEDevice::startAdvertising();
+}
+
+void blinkLedDiagnostic(uint8_t r, uint8_t g, uint8_t b, int times) {
+#ifdef RGB_BUILTIN
+  for (int i = 0; i < times; ++i) {
+    rgbLedWrite(RGB_BUILTIN, r, g, b);
+    delay(150);
+    rgbLedWrite(RGB_BUILTIN, 0, 0, 0);
+    delay(150);
+  }
+#endif
 }
 
 void updateStatusLed() {
@@ -241,13 +259,12 @@ void updateStatusLed() {
   uint8_t r = 0, g = 0, b = 0;
 
   if (now < gActivityUntilMs) {
-    b = 32;  // Brief blue flash on frame accepted (UART or BLE).
+    b = 32;
   } else if (usbMounted) {
     if (now - lastToggleMs >= 1000U) {
       lastToggleMs = now;
       blinkOn = !blinkOn;
     }
-    // Tint green slightly cyan when a BLE client is also connected.
     g = blinkOn ? 4 : 0;
     if (gBLEClientConnected) { b = blinkOn ? 4 : 0; }
   } else {
@@ -279,14 +296,35 @@ void setup() {
   USB.productName("ESP32 KVM HID Bridge");
   USB.manufacturerName("Cafe Labs");
 
+  // Bring BLE up BEFORE USB so the BT controller initialises with a clean radio
+  // power-on sequence; on the S3, USB.begin() can change power domains in a way
+  // that occasionally prevents the BT controller from radiating.
+  setupBLE();
+
   gKeyboard.begin();
   gMouse.begin();
   USB.begin();
 
-  setupBLE();
+  const bool bleOK = NimBLEDevice::isInitialized();
+  gUartLink.printf("\r\n[BOOT] CaptureKVM HID Bridge - BLE init=%s, name='%s', adv=ON\r\n",
+                   bleOK ? "OK" : "FAIL", gBLEDeviceName);
+  gUartLink.flush();
+
+  blinkLedDiagnostic(bleOK ? 0 : 64, 0, bleOK ? 64 : 0, 3);
 }
 
 void loop() {
   readUartFrames();
   updateStatusLed();
+
+  static uint32_t lastHeartbeatMs = 0;
+  const uint32_t now = millis();
+  if (now - lastHeartbeatMs >= 5000U) {
+    lastHeartbeatMs = now;
+    gUartLink.printf("[HB] uptime=%lus, ble_client=%d, ble_initialized=%d, advertising=%d\r\n",
+                     now / 1000UL,
+                     gBLEClientConnected ? 1 : 0,
+                     NimBLEDevice::isInitialized() ? 1 : 0,
+                     NimBLEDevice::getAdvertising()->isAdvertising() ? 1 : 0);
+  }
 }

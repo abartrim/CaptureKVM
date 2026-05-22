@@ -263,6 +263,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CaptureKVM;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Act as a HID Keyboard and Mouse for the target machine";
 				INFOPLIST_KEY_NSCameraUsageDescription = "CaptureKVM uses the USB-C capture card as a video input to display the controlled machine.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainCameraUsageDescription = "CaptureKVM uses the USB-C capture card as a video input to display the controlled machine.";
@@ -301,6 +302,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CaptureKVM;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Act as a HID Keyboard and Mouse for the target machine";
 				INFOPLIST_KEY_NSCameraUsageDescription = "CaptureKVM uses the USB-C capture card as a video input to display the controlled machine.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainCameraUsageDescription = "CaptureKVM uses the USB-C capture card as a video input to display the controlled machine.";

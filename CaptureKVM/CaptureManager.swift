@@ -93,7 +93,11 @@ final class CaptureManager {
 /// Forwards each captured frame straight to the display layer.
 /// `alwaysDiscardsLateVideoFrames` on the output guarantees we only see the freshest frame.
 final class VideoOutputDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
-    let displayLayer: AVSampleBufferDisplayLayer
+    // nonisolated(unsafe) so we can read it from the (nonisolated) delegate callback on
+    // the userInteractive output queue without bouncing back to the main actor.
+    // AVSampleBufferDisplayLayer isn't formally Sendable but its sampleBufferRenderer
+    // enqueue path is documented thread-safe, so this is safe in practice.
+    nonisolated(unsafe) let displayLayer: AVSampleBufferDisplayLayer
     init(displayLayer: AVSampleBufferDisplayLayer) {
         self.displayLayer = displayLayer
     }
@@ -101,8 +105,9 @@ final class VideoOutputDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferD
     nonisolated func captureOutput(_ output: AVCaptureOutput,
                                    didOutput sampleBuffer: CMSampleBuffer,
                                    from connection: AVCaptureConnection) {
-        // AVSampleBufferDisplayLayer.enqueue is thread-safe; we're on the output queue here.
-        displayLayer.enqueue(sampleBuffer)
+        // sampleBufferRenderer.enqueue is the macOS 15+ entry point; the deprecated
+        // AVSampleBufferDisplayLayer.enqueue was just a shim over this. Thread-safe.
+        displayLayer.sampleBufferRenderer.enqueue(sampleBuffer)
     }
 }
 
