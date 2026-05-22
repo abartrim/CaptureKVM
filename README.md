@@ -90,7 +90,7 @@ ESP32KVMFirmware/           Arduino sketch for the ESP32-S3.
 
 | Item                                                | Notes                                                                       |
 | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| ESP32-S3-DevKitC "Dual Type-C" (N8R2 or similar)    | Two USB-C connectors: one native USB (target), one USB-UART bridge (host).  |
+| ESP32-S3-DevKitC "Dual Type-C" (any 4-16 MB flash variant) | Two USB-C connectors: one native USB (target), one USB-UART bridge (host). PSRAM is not required. |
 | USB-C video capture card (UVC-class)                | Tested with generic "Guermok USB3 Video" type devices. Anything UVC works.  |
 | USB-C cable to target video out                     | HDMI-to-USB-C if the target has HDMI.                                       |
 | Two USB-C data cables                               | One Mac↔ESP32 "COM"; one ESP32 "USB"↔target. Power-only cables won't work.  |
@@ -141,7 +141,7 @@ The sketch uses the **Arduino-ESP32** core (3.x) and its `USBHIDKeyboard` / `USB
 | Flash Mode           | QIO 80 MHz                             |
 | Flash Size           | 8 MB (for N8R2)                        |
 | Partition Scheme     | 8M with spiffs (3MB APP/1.5MB SPIFFS)  |
-| PSRAM                | QSPI PSRAM                             |
+| PSRAM                | **Disabled**                           |
 | Upload Speed         | 460800 (921600 sometimes glitches)     |
 
 ### Flashing from the IDE
@@ -157,7 +157,7 @@ The sketch uses the **Arduino-ESP32** core (3.x) and its `USBHIDKeyboard` / `USB
 
 ```
 ARDCLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
-FQBN="esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=8M,PartitionScheme=default_8MB,PSRAM=enabled,UploadMode=default,UploadSpeed=460800"
+FQBN="esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=8M,PartitionScheme=default_8MB,PSRAM=disabled,UploadMode=default,UploadSpeed=460800"
 PORT="/dev/cu.usbmodemXXXX"
 
 "$ARDCLI" compile --fqbn "$FQBN" ESP32KVMFirmware
