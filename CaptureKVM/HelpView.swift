@@ -78,6 +78,15 @@ struct HelpView: View {
                     bullet("Mode info (BLE on/off, client connected, etc.) is shown in the app rather than on the LED.")
                 }
 
+                section("Flashing firmware from the app") {
+                    Text("The Mac app ships the matching ESP32 firmware inside its own bundle. To flash:")
+                        .font(.callout)
+                    bullet("Open **Settings → Firmware**.")
+                    bullet("Pick the ESP32's COM (USB-UART bridge) port from the dropdown.")
+                    bullet("Click **Flash bundled firmware**. The app closes any existing serial connection, runs the bundled `esptool` against the port, and reports progress. Takes about 10 seconds.")
+                    bullet("When it's done the ESP32 hard-resets and the new firmware is live.")
+                }
+
                 section("Troubleshooting") {
                     bullet("**\"No response from ESP32 at any baud.\"** Re-flash from `ESP32KVMFirmware/`. Disconnect the app first; it holds the port.")
                     bullet("**HID icon stays orange even when connected.** Target machine isn't seeing the HID. Reseat the USB-C cable to the target's \"USB\" port, or try a known-good data cable. The icon updates within 2s.")

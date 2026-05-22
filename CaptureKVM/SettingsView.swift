@@ -4,6 +4,7 @@ import SwiftUI
 /// plus an orchestrated Bluetooth pairing flow.
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @StateObject private var flasher = FirmwareFlasher()
 
     var body: some View {
         TabView {
@@ -11,8 +12,10 @@ struct SettingsView: View {
                 .tabItem { Label("Keyboard", systemImage: "keyboard") }
             bluetoothTab
                 .tabItem { Label("Bluetooth", systemImage: "antenna.radiowaves.left.and.right") }
+            firmwareTab
+                .tabItem { Label("Firmware", systemImage: "cpu") }
         }
-        .frame(width: 560, height: 400)
+        .frame(width: 560, height: 440)
     }
 
     // MARK: - Keyboard tab
@@ -140,6 +143,70 @@ struct SettingsView: View {
 
     private var canManage: Bool {
         model.isConnected && model.transportKind == .usbSerial
+    }
+
+    // MARK: - Firmware tab
+
+    private var firmwareTab: some View {
+        Form {
+            Section {
+                LabeledContent("Port") {
+                    Picker("", selection: $model.selectedSerialPath) {
+                        Text("— Select —").tag("")
+                        ForEach(model.serialPorts, id: \.self) { p in Text(p).tag(p) }
+                    }
+                    .labelsHidden()
+                }
+
+                HStack {
+                    Button {
+                        if model.isConnected, model.transportKind == .usbSerial {
+                            model.disconnect()
+                        }
+                        flasher.start(port: model.selectedSerialPath)
+                    } label: {
+                        if flasher.isFlashing {
+                            Label("Flashing… \(flasher.progressPercent)%",
+                                  systemImage: "arrow.triangle.2.circlepath")
+                        } else {
+                            Label("Flash bundled firmware", systemImage: "memorychip")
+                        }
+                    }
+                    .disabled(model.selectedSerialPath.isEmpty || flasher.isFlashing)
+
+                    Spacer()
+                    if flasher.isFlashing {
+                        ProgressView(value: Double(flasher.progressPercent), total: 100)
+                            .frame(width: 140)
+                    }
+                }
+
+                if flasher.lastSuccess {
+                    Label("Flash succeeded. ESP32 has rebooted.", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+                if let err = flasher.lastError, !err.isEmpty {
+                    Label(err, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !flasher.lastLogLine.isEmpty {
+                    Text(flasher.lastLogLine)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                Text("Bundled firmware")
+            } footer: {
+                Text("Flashes the firmware that ships with this version of the Mac app to the ESP32 over the selected USB-COM port. Any existing serial connection is closed first. Takes ~10 seconds at 460 800 baud. The ESP32 hard-resets when complete.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.horizontal)
     }
 }
 

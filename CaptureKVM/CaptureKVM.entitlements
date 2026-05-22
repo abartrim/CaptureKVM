@@ -12,5 +12,11 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
+	<!-- Required for the bundled `esptool` (a PyInstaller-built binary) to load
+	     its own Python libraries under hardened runtime. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
 </dict>
 </plist>
