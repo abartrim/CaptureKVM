@@ -9,36 +9,33 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    @StateObject private var model = AppModel()
+    @ObservedObject var model: AppModel
 
     var body: some View {
         VStack(spacing: 8) {
-            // Controls
-            HStack(spacing: 12) {
-                // Video device picker
+            // Single-row action bar. Configurable controls live in Settings (⌘,).
+            HStack(spacing: 10) {
                 Picker("Video", selection: $model.selectedVideoUniqueID) {
                     Text("— Select —").tag("")
                     ForEach(model.videoDevices, id: \.uniqueID) { device in
                         Text(device.localizedName).tag(device.uniqueID)
                     }
                 }
-                .frame(minWidth: 220)
+                .frame(minWidth: 180, maxWidth: 240)
                 .onChange(of: model.selectedVideoUniqueID) { _, newValue in
                     model.selectVideoDevice(uniqueID: newValue)
                 }
 
-                // Transport picker (USB Serial vs Bluetooth)
                 Picker("Link", selection: $model.transportKind) {
                     ForEach(TransportKind.allCases) { t in Text(t.rawValue).tag(t) }
                 }
-                .frame(width: 170)
+                .frame(width: 150)
                 .disabled(model.isConnected)
                 .onChange(of: model.transportKind) { _, newKind in
                     if newKind == .bluetooth { model.startBLEScan() }
                     else { model.stopBLEScan() }
                 }
 
-                // Device picker — swaps based on transport
                 if model.transportKind == .usbSerial {
                     Picker("ESP32", selection: $model.selectedSerialPath) {
                         Text("— Select —").tag("")
@@ -46,7 +43,7 @@ struct ContentView: View {
                             Text(port).tag(port)
                         }
                     }
-                    .frame(minWidth: 240)
+                    .frame(minWidth: 200, maxWidth: 260)
                 } else {
                     Picker("ESP32", selection: $model.selectedBLEPeripheralID) {
                         Text(model.blePeripherals.isEmpty ? "— Scanning… —" : "— Select —")
@@ -55,16 +52,14 @@ struct ContentView: View {
                             Text(p.name).tag(UUID?.some(p.id))
                         }
                     }
-                    .frame(minWidth: 240)
+                    .frame(minWidth: 200, maxWidth: 260)
                 }
 
                 Button(model.isConnected ? "Disconnect" : "Connect") {
-                    if model.isConnected {
-                        model.disconnect()
-                    } else {
-                        model.connect()
-                    }
+                    if model.isConnected { model.disconnect() } else { model.connect() }
                 }
+                .fixedSize()                      // keep the label visible no matter how tight the row gets
+                .keyboardShortcut(.return, modifiers: [.command])
                 .disabled(
                     (model.transportKind == .usbSerial && model.selectedSerialPath.isEmpty) ||
                     (model.transportKind == .bluetooth && model.selectedBLEPeripheralID == nil)
@@ -73,31 +68,18 @@ struct ContentView: View {
                 Toggle("Capture Input", isOn: $model.captureInput)
                     .toggleStyle(.switch)
                     .disabled(!model.isConnected)
-                    .help("When enabled, keyboard and mouse events over the video are forwarded to the ESP32.")
+                    .help("Forward host keyboard + mouse events to the target. Click the preview to enable; press fn+Esc to release.")
 
-                Toggle("⌘↔⌃", isOn: $model.swapCmdCtrl)
-                    .toggleStyle(.button)
-                    .help("Swap host Cmd and Ctrl when sending modifiers. Enable for Linux/Windows targets so ⌘C/⌘V behave as Ctrl+C/Ctrl+V.")
-
-                Button(model.isPasting ? "Pasting…" : "Paste to Target") {
+                Button(model.isPasting ? "Pasting…" : "Paste") {
                     model.pasteFromClipboard()
                 }
+                .fixedSize()
                 .disabled(!model.isConnected || model.isPasting)
-                .help("Types the host clipboard into the target as keystrokes (also: Cmd+Shift+V while in capture mode).")
+                .help("Types the host clipboard into the target as keystrokes (also: ⇧⌘V while in capture mode).")
 
                 Spacer()
 
-                // Status
-                HStack(spacing: 12) {
-                    if model.captureInput {
-                        Label("Input captured — fn+Esc to release", systemImage: "keyboard.fill")
-                            .foregroundStyle(Color.accentColor)
-                    }
-                    Label(model.captureStatusText, systemImage: model.captureStatusOK ? "camera.viewfinder" : "exclamationmark.triangle")
-                        .foregroundStyle(model.captureStatusOK ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
-                    Label(model.serialStatusText, systemImage: model.isConnected ? "cable.connector" : "bolt.horizontal.circle")
-                        .foregroundStyle(model.isConnected ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
-                }
+                statusStrip
             }
             .padding(.horizontal)
 
@@ -113,7 +95,6 @@ struct ContentView: View {
                 CapturePreviewView(displayLayer: model.capture.displayLayer)
                     .background(Color.black)
 
-                // Transparent input layer to receive NSEvents
                 InputForwarderView(
                     isActive: model.captureInput,
                     onKeyDown: { event in model.handleKeyDown(event) },
@@ -129,7 +110,7 @@ struct ContentView: View {
                         model.captureInput = true
                     }
                 )
-                .allowsHitTesting(model.isConnected) // Hit-test when connected; the view decides whether to activate or forward
+                .allowsHitTesting(model.isConnected)
             }
             .frame(minHeight: 360)
             .onAppear {
@@ -138,8 +119,91 @@ struct ContentView: View {
             }
         }
     }
+
+    // MARK: - Status strip (icon-only with tooltips)
+
+    private var statusStrip: some View {
+        HStack(spacing: 10) {
+            StatusIcon(
+                systemImage: model.captureStatusOK ? "video.fill" : "video.slash",
+                active: model.captureStatusOK,
+                color: model.captureStatusOK ? .green : .secondary,
+                help: model.captureStatusOK ? "Video signal OK" : "No video signal"
+            )
+
+            StatusIcon(
+                systemImage: linkIconName,
+                active: model.isConnected,
+                color: model.isConnected ? .green : .secondary,
+                help: model.isConnected
+                    ? "\(model.transportKind.rawValue) connected · \(model.serialStatusText)"
+                    : "\(model.transportKind.rawValue) not connected"
+            )
+
+            // HID enumeration on the target. We only know this when the firmware tells us
+            // (USB Serial transport polls every 2s). Over BLE we show it as "unknown".
+            StatusIcon(
+                systemImage: "bolt.horizontal.fill",
+                active: hidIconActive,
+                color: hidIconColor,
+                help: hidIconHelp
+            )
+
+            StatusIcon(
+                systemImage: "keyboard.fill",
+                active: model.captureInput,
+                color: model.captureInput ? .accentColor : .secondary,
+                help: model.captureInput ? "Input captured — fn+Esc to release" : "Input not captured (click preview to capture)"
+            )
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var linkIconName: String {
+        switch model.transportKind {
+        case .usbSerial: return model.isConnected ? "cable.connector" : "cable.connector.slash"
+        case .bluetooth: return model.isConnected ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash"
+        }
+    }
+
+    private var hidIconActive: Bool {
+        model.isConnected && model.transportKind == .usbSerial && model.hidMountedOnTarget
+    }
+
+    private var hidIconColor: Color {
+        guard model.isConnected else { return .secondary }
+        if model.transportKind != .usbSerial { return .secondary }    // unknown on BLE
+        return model.hidMountedOnTarget ? .green : .orange
+    }
+
+    private var hidIconHelp: String {
+        guard model.isConnected else { return "ESP32 not connected" }
+        if model.transportKind != .usbSerial {
+            return "HID status only reported over USB Serial. Connect via USB to verify the target sees the HID device."
+        }
+        return model.hidMountedOnTarget
+            ? "Target machine has enumerated the ESP32 as HID keyboard + mouse"
+            : "Target machine has NOT enumerated the HID device. Check the ESP32's USB-C cable to the target."
+    }
+}
+
+/// Small icon-only status indicator with a hover tooltip and an "active" dim/highlight.
+private struct StatusIcon: View {
+    let systemImage: String
+    let active: Bool
+    let color: Color
+    let help: String
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(color)
+            .opacity(active ? 1.0 : 0.55)
+            .frame(width: 22, height: 22)
+            .help(help)
+    }
 }
 
 #Preview {
-    ContentView()
+    ContentView(model: AppModel())
 }

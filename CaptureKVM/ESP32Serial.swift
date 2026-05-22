@@ -10,6 +10,10 @@ final class ESP32Serial: FrameTransport {
     var onConnectionChanged: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
 
+    // Framed-response callbacks (UART only; PIN/state management).
+    var onPin: ((String) -> Void)?
+    var onState: ((_ bleEnabled: Bool, _ hidMounted: Bool, _ bleClient: Bool, _ pin: String, _ name: String) -> Void)?
+
     var isConnected: Bool { fd >= 0 }
     var statusDescription: String {
         guard isConnected else { return "ESP32 Disconnected" }
@@ -21,6 +25,11 @@ final class ESP32Serial: FrameTransport {
     private static let baudCandidates: [Int] = [921600, 460800, 230400, 115200]
     private static let pongByte: UInt8 = 0xAA
     private static let probeTimeoutMs: Int = 150
+
+    // Read loop state — populated after a successful baud negotiation.
+    private var readSource: DispatchSourceRead?
+    private var rxBuffer: [UInt8] = []
+    private let maxFrameLen = 32
 
     static func availablePorts() -> [String] {
         let patterns = ["/dev/cu.usb*", "/dev/cu.SLAB*", "/dev/cu.wchusbserial*"]
@@ -58,14 +67,12 @@ final class ESP32Serial: FrameTransport {
         tio.c_cflag |= (tcflag_t(CLOCAL) | tcflag_t(CREAD))
         tio.c_cflag &= ~tcflag_t(CRTSCTS)
 
-        // Build a single COBS+CRC8 ping frame; reused at every baud attempt.
         let pingFrame = HIDEncoder.frame(type: 0x80, payload: [])
 
         for baud in ESP32Serial.baudCandidates {
             cfsetispeed(&tio, speed_t(baud))
             cfsetospeed(&tio, speed_t(baud))
             if tcsetattr(fd, TCSANOW, &tio) != 0 { continue }
-            // Discard any garbage that arrived at the previous baud.
             tcflush(fd, TCIOFLUSH)
 
             pingFrame.withUnsafeBytes { buf in
@@ -76,12 +83,12 @@ final class ESP32Serial: FrameTransport {
                 self.fd = fd
                 self.negotiatedBaud = baud
                 serialLog.info("connected to \(path, privacy: .public) at \(baud) baud")
+                startReadLoop()
                 onConnectionChanged?(true)
                 return
             }
         }
 
-        // All bauds failed.
         let msg = "No response from ESP32 at any baud. Confirm firmware is flashed and matches this app version."
         serialLog.error("\(msg, privacy: .public)")
         onError?(msg)
@@ -89,6 +96,9 @@ final class ESP32Serial: FrameTransport {
     }
 
     func disconnect() {
+        readSource?.cancel()
+        readSource = nil
+        rxBuffer.removeAll()
         if fd >= 0 {
             close(fd)
             fd = -1
@@ -104,7 +114,74 @@ final class ESP32Serial: FrameTransport {
         }
     }
 
-    /// Polls the fd for `pongByte` until timeout. Non-blocking reads + short usleep keep CPU low.
+    // MARK: - Read loop + framed response parsing
+
+    private func startReadLoop() {
+        guard fd >= 0 else { return }
+        readSource?.cancel()
+        let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        src.setEventHandler { [weak self] in
+            self?.drainAndParse()
+        }
+        src.resume()
+        readSource = src
+    }
+
+    private func drainAndParse() {
+        guard fd >= 0 else { return }
+        var buf = [UInt8](repeating: 0, count: 128)
+        let n = buf.withUnsafeMutableBufferPointer { ptr in
+            Darwin.read(fd, ptr.baseAddress, ptr.count)
+        }
+        guard n > 0 else { return }
+        for i in 0..<Int(n) {
+            let b = buf[i]
+            if b == 0x00 {
+                finalizeRxFrame()
+            } else {
+                if rxBuffer.count >= maxFrameLen {
+                    rxBuffer.removeAll()  // overflow; resync
+                } else {
+                    rxBuffer.append(b)
+                }
+            }
+        }
+    }
+
+    private func finalizeRxFrame() {
+        defer { rxBuffer.removeAll(keepingCapacity: true) }
+        guard !rxBuffer.isEmpty else { return }
+        guard let decoded = HIDEncoder.cobsDecode(rxBuffer), decoded.count >= 2 else { return }
+        let crc = decoded.last!
+        let payload = Array(decoded.dropLast())
+        guard HIDEncoder.crc8(data: payload) == crc else { return }
+        let type = payload[0]
+        let body = Array(payload.dropFirst())
+        handleResponseFrame(type: type, payload: body)
+    }
+
+    private func handleResponseFrame(type: UInt8, payload: [UInt8]) {
+        switch type {
+        case 0x81, 0x82:  // GET_PIN response / ROTATE_PIN response
+            if payload.count >= 6,
+               let pin = String(bytes: payload.prefix(6), encoding: .ascii) {
+                onPin?(pin)
+            }
+        case 0x85:  // GET_STATE: [bleEnabled(1), hidMounted(1), bleClient(1), pin(6 ASCII), name...]
+            guard payload.count >= 9 else { return }
+            let bleEnabled = payload[0] != 0
+            let hidMounted = payload[1] != 0
+            let bleClient  = payload[2] != 0
+            guard let pin = String(bytes: payload[3..<9], encoding: .ascii) else { return }
+            let nameBytes = Array(payload.dropFirst(9))
+            let name = String(bytes: nameBytes, encoding: .utf8) ?? ""
+            onState?(bleEnabled, hidMounted, bleClient, pin, name)
+        default:
+            break
+        }
+    }
+
+    /// Polls the fd for `pongByte` until timeout.
     private func waitForPong(fd: Int32, timeoutMs: Int) -> Bool {
         let deadline = Date().addingTimeInterval(TimeInterval(timeoutMs) / 1000.0)
         var byte: UInt8 = 0
@@ -112,7 +189,7 @@ final class ESP32Serial: FrameTransport {
             let n = Darwin.read(fd, &byte, 1)
             if n == 1 && byte == ESP32Serial.pongByte { return true }
             if n < 0 && errno != EAGAIN { return false }
-            usleep(2000) // 2 ms
+            usleep(2000)
         }
         return false
     }

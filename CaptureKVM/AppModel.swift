@@ -31,6 +31,21 @@ final class AppModel: ObservableObject {
     // Paste-from-host state
     @Published var isPasting: Bool = false
 
+    // Surfaced from the firmware over UART. Cached to UserDefaults so the Settings
+    // window can still show the last-known PIN when we're not currently on USB.
+    @Published var blePIN: String = (UserDefaults.standard.string(forKey: "lastBlePIN") ?? "") {
+        didSet { UserDefaults.standard.set(blePIN, forKey: "lastBlePIN") }
+    }
+    /// True when blePIN was set by the live firmware (via GET_STATE) during this session.
+    /// False if the value is just the cached one from a previous session.
+    @Published var blePinIsLive: Bool = false
+    @Published var bleRadioEnabled: Bool = true
+    @Published var bleDeviceName: String = UserDefaults.standard.string(forKey: "lastBleName") ?? ""
+    /// Target machine has enumerated the ESP32's USB HID. Unknown when on BLE.
+    @Published var hidMountedOnTarget: Bool = false
+    /// Some BLE central is connected to the ESP32 (we may not be the only one).
+    @Published var bleClientConnected: Bool = false
+
     // Input capture toggle
     @Published var captureInput: Bool = false
 
@@ -69,25 +84,65 @@ final class AppModel: ObservableObject {
     private var deviceConnectObserver: NSObjectProtocol?
     private var deviceDisconnectObserver: NSObjectProtocol?
 
+    /// Periodic state poll while connected via USB Serial so the status icons stay live.
+    private var firmwareStatePollTimer: DispatchSourceTimer?
+
     init() {
         setupMouseTimer()
         setupVideoDeviceWatcher()
         setupSerialPollTimer()
-        let connHandler: (Bool) -> Void = { [weak self] connected in
+        setupFirmwareStatePollTimer()
+        let errHandler: (String) -> Void = { [weak self] message in
+            DispatchQueue.main.async { self?.lastSerialError = message }
+        }
+        serial.onConnectionChanged = { [weak self] connected in
+            DispatchQueue.main.async {
+                self?.isConnected = connected
+                if !connected {
+                    self?.captureInput = false
+                    self?.blePinIsLive = false      // PIN value is now stale (cached)
+                    self?.hidMountedOnTarget = false
+                    self?.bleClientConnected = false
+                } else {
+                    self?.requestFirmwareState()    // populate PIN + BLE state
+                }
+            }
+        }
+        serial.onError = errHandler
+        serial.onPin = { [weak self] pin in
+            DispatchQueue.main.async { self?.blePIN = pin }
+        }
+        serial.onState = { [weak self] enabled, hidMounted, bleClient, pin, name in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.bleRadioEnabled = enabled
+                self.hidMountedOnTarget = hidMounted
+                self.bleClientConnected = bleClient
+                if !pin.isEmpty { self.blePIN = pin }
+                self.blePinIsLive = true
+                if !name.isEmpty {
+                    self.bleDeviceName = name
+                    UserDefaults.standard.set(name, forKey: "lastBleName")
+                }
+            }
+        }
+        bluetooth.onConnectionChanged = { [weak self] connected in
             DispatchQueue.main.async {
                 self?.isConnected = connected
                 if !connected { self?.captureInput = false }
             }
         }
-        let errHandler: (String) -> Void = { [weak self] message in
-            DispatchQueue.main.async { self?.lastSerialError = message }
-        }
-        serial.onConnectionChanged = connHandler
-        serial.onError = errHandler
-        bluetooth.onConnectionChanged = connHandler
         bluetooth.onError = errHandler
         bluetooth.onDiscoveredPeripheralsChanged = { [weak self] list in
-            DispatchQueue.main.async { self?.blePeripherals = list }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.blePeripherals = list
+                // Convenience: while the user hasn't picked anything yet, auto-select
+                // the first KVM-prefixed peripheral so the Connect button arms itself.
+                if self.selectedBLEPeripheralID == nil, let first = list.first {
+                    self.selectedBLEPeripheralID = first.id
+                }
+            }
         }
     }
 
@@ -95,6 +150,7 @@ final class AppModel: ObservableObject {
         if let o = deviceConnectObserver { NotificationCenter.default.removeObserver(o) }
         if let o = deviceDisconnectObserver { NotificationCenter.default.removeObserver(o) }
         serialPollTimer?.cancel()
+        firmwareStatePollTimer?.cancel()
         mouseTimer?.cancel()
     }
 
@@ -147,6 +203,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func setupFirmwareStatePollTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + .seconds(2), repeating: .seconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            if self.transportKind == .usbSerial, self.isConnected {
+                self.requestFirmwareState()
+            }
+        }
+        timer.resume()
+        firmwareStatePollTimer = timer
+    }
+
     private func setupSerialPollTimer() {
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + .seconds(2), repeating: .seconds(2))
@@ -172,6 +241,42 @@ final class AppModel: ObservableObject {
 
     func startBLEScan()  { bluetooth.startScan() }
     func stopBLEScan()   { bluetooth.stopScan()  }
+
+    // MARK: - Firmware management commands (UART-only)
+
+    private func sendCommand(_ type: UInt8, payload: [UInt8] = []) {
+        guard transportKind == .usbSerial, isConnected else { return }
+        let frame = HIDEncoder.frame(type: type, payload: payload)
+        serial.send(frame: frame)
+    }
+
+    func requestFirmwareState() { sendCommand(0x85) }  // GET_STATE
+    func requestBlePin()        { sendCommand(0x81) }  // GET_PIN
+    func rotateBlePin() {
+        // Optimistic clear so the UI doesn't briefly show the old PIN; the new value
+        // will arrive in the follow-up state response.
+        blePIN = ""
+        blePinIsLive = false
+        sendCommand(0x82)
+    }
+    func setBleRadioEnabled(_ enabled: Bool) {
+        // Optimistic update so the SwiftUI Toggle stays in the new position rather
+        // than snapping back while we wait for the firmware's state response.
+        bleRadioEnabled = enabled
+        sendCommand(enabled ? 0x83 : 0x84)
+    }
+
+    // MARK: - Bluetooth pair orchestration
+
+    /// One-shot helper used by the Settings window's "Pair Bluetooth" button.
+    /// Switches the transport to Bluetooth, kicks off a scan, and arms a watch
+    /// that auto-connects to the first discovered KVM bridge.
+    func startBluetoothPairFlow() {
+        if isConnected { disconnect() }
+        selectedBLEPeripheralID = nil
+        transportKind = .bluetooth
+        startBLEScan()
+    }
 
     // MARK: - Input handling
     func handleKeyDown(_ event: NSEvent) {

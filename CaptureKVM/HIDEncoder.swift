@@ -170,6 +170,29 @@ enum HIDEncoder {
         return out
     }
 
+    /// Decode a COBS-encoded byte sequence (no trailing 0x00 delimiter).
+    /// Returns nil on malformed input.
+    static func cobsDecode(_ input: [UInt8]) -> [UInt8]? {
+        var out: [UInt8] = []
+        out.reserveCapacity(input.count)
+        var readIndex = 0
+        while readIndex < input.count {
+            let code = input[readIndex]
+            readIndex += 1
+            if code == 0 { return nil }
+            for copyIndex in 1..<Int(code) {
+                _ = copyIndex
+                guard readIndex < input.count else { return nil }
+                out.append(input[readIndex])
+                readIndex += 1
+            }
+            if code != 0xFF, readIndex < input.count {
+                out.append(0x00)
+            }
+        }
+        return out
+    }
+
     static func frame(type: UInt8, payload: [UInt8]) -> Data {
         var buf: [UInt8] = [type]
         buf.append(contentsOf: payload)
