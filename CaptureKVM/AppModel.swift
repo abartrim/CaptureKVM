@@ -2,6 +2,13 @@ import SwiftUI
 import AppKit
 import AVFoundation
 import Combine
+import CoreBluetooth
+
+enum TransportKind: String, CaseIterable, Identifiable {
+    case usbSerial = "USB Serial"
+    case bluetooth = "Bluetooth"
+    var id: String { rawValue }
+}
 
 final class AppModel: ObservableObject {
     // Video
@@ -13,6 +20,13 @@ final class AppModel: ObservableObject {
     @Published var selectedSerialPath: String = ""
     @Published var isConnected: Bool = false
     @Published var lastSerialError: String = ""
+
+    // Transport selection + Bluetooth
+    @Published var transportKind: TransportKind = TransportKind(rawValue: UserDefaults.standard.string(forKey: "transportKind") ?? "") ?? .usbSerial {
+        didSet { UserDefaults.standard.set(transportKind.rawValue, forKey: "transportKind") }
+    }
+    @Published var blePeripherals: [BLEPeripheralInfo] = []
+    @Published var selectedBLEPeripheralID: UUID? = nil
 
     // Paste-from-host state
     @Published var isPasting: Bool = false
@@ -28,6 +42,15 @@ final class AppModel: ObservableObject {
     // Managers
     let capture = CaptureManager()
     let serial = ESP32Serial()
+    let bluetooth = BluetoothTransport()
+
+    /// Direct switch dispatch on the hot path — no protocol witness call.
+    private var transport: FrameTransport {
+        switch transportKind {
+        case .usbSerial: return serial
+        case .bluetooth: return bluetooth
+        }
+    }
 
     // Keyboard state (6KRO)
     private var pressedUsages: Set<UInt8> = []
@@ -50,14 +73,21 @@ final class AppModel: ObservableObject {
         setupMouseTimer()
         setupVideoDeviceWatcher()
         setupSerialPollTimer()
-        serial.onConnectionChanged = { [weak self] connected in
+        let connHandler: (Bool) -> Void = { [weak self] connected in
             DispatchQueue.main.async {
                 self?.isConnected = connected
                 if !connected { self?.captureInput = false }
             }
         }
-        serial.onError = { [weak self] message in
+        let errHandler: (String) -> Void = { [weak self] message in
             DispatchQueue.main.async { self?.lastSerialError = message }
+        }
+        serial.onConnectionChanged = connHandler
+        serial.onError = errHandler
+        bluetooth.onConnectionChanged = connHandler
+        bluetooth.onError = errHandler
+        bluetooth.onDiscoveredPeripheralsChanged = { [weak self] list in
+            DispatchQueue.main.async { self?.blePeripherals = list }
         }
     }
 
@@ -72,10 +102,7 @@ final class AppModel: ObservableObject {
     var captureStatusOK: Bool { capture.isRunning }
     var captureStatusText: String { capture.isRunning ? "Video OK" : "No Video" }
     var serialStatusText: String {
-        if isConnected {
-            return serial.negotiatedBaud > 0 ? "ESP32 @ \(serial.negotiatedBaud)" : "ESP32 Connected"
-        }
-        return "ESP32 Disconnected"
+        isConnected ? transport.statusDescription : "ESP32 Disconnected"
     }
 
     // MARK: - Video
@@ -131,13 +158,20 @@ final class AppModel: ObservableObject {
     }
 
     func connect() {
-        guard !selectedSerialPath.isEmpty else { return }
-        serial.connect(path: selectedSerialPath)
+        switch transportKind {
+        case .usbSerial:
+            guard !selectedSerialPath.isEmpty else { return }
+            serial.connect(path: selectedSerialPath)
+        case .bluetooth:
+            guard let id = selectedBLEPeripheralID else { return }
+            bluetooth.connect(peripheralID: id)
+        }
     }
 
-    func disconnect() {
-        serial.disconnect()
-    }
+    func disconnect() { transport.disconnect() }
+
+    func startBLEScan()  { bluetooth.startScan() }
+    func stopBLEScan()   { bluetooth.stopScan()  }
 
     // MARK: - Input handling
     func handleKeyDown(_ event: NSEvent) {
@@ -209,7 +243,7 @@ final class AppModel: ObservableObject {
         let keys = Array(pressedUsages.prefix(6))
         for (i, k) in keys.enumerated() { report[2 + i] = k }
         let frame = HIDEncoder.frame(type: 0x01, payload: report)
-        serial.send(frame: frame)
+        transport.send(frame: frame)
     }
 
     // MARK: - Paste from host
@@ -242,7 +276,7 @@ final class AppModel: ObservableObject {
         report[0] = modifier
         report[2] = key
         let frame = HIDEncoder.frame(type: 0x01, payload: report)
-        serial.send(frame: frame)
+        transport.send(frame: frame)
     }
 
     private func setupMouseTimer() {
@@ -268,6 +302,6 @@ final class AppModel: ObservableObject {
 
     private func sendMouse(payload: [UInt8]) {
         let frame = HIDEncoder.frame(type: 0x02, payload: payload)
-        serial.send(frame: frame)
+        transport.send(frame: frame)
     }
 }

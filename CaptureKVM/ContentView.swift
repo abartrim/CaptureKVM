@@ -27,14 +27,36 @@ struct ContentView: View {
                     model.selectVideoDevice(uniqueID: newValue)
                 }
 
-                // Serial port picker
-                Picker("ESP32", selection: $model.selectedSerialPath) {
-                    Text("— Select —").tag("")
-                    ForEach(model.serialPorts, id: \.self) { port in
-                        Text(port).tag(port)
-                    }
+                // Transport picker (USB Serial vs Bluetooth)
+                Picker("Link", selection: $model.transportKind) {
+                    ForEach(TransportKind.allCases) { t in Text(t.rawValue).tag(t) }
                 }
-                .frame(minWidth: 240)
+                .frame(width: 170)
+                .disabled(model.isConnected)
+                .onChange(of: model.transportKind) { _, newKind in
+                    if newKind == .bluetooth { model.startBLEScan() }
+                    else { model.stopBLEScan() }
+                }
+
+                // Device picker — swaps based on transport
+                if model.transportKind == .usbSerial {
+                    Picker("ESP32", selection: $model.selectedSerialPath) {
+                        Text("— Select —").tag("")
+                        ForEach(model.serialPorts, id: \.self) { port in
+                            Text(port).tag(port)
+                        }
+                    }
+                    .frame(minWidth: 240)
+                } else {
+                    Picker("ESP32", selection: $model.selectedBLEPeripheralID) {
+                        Text(model.blePeripherals.isEmpty ? "— Scanning… —" : "— Select —")
+                            .tag(UUID?.none)
+                        ForEach(model.blePeripherals) { p in
+                            Text(p.name).tag(UUID?.some(p.id))
+                        }
+                    }
+                    .frame(minWidth: 240)
+                }
 
                 Button(model.isConnected ? "Disconnect" : "Connect") {
                     if model.isConnected {
@@ -43,7 +65,10 @@ struct ContentView: View {
                         model.connect()
                     }
                 }
-                .disabled(model.selectedSerialPath.isEmpty)
+                .disabled(
+                    (model.transportKind == .usbSerial && model.selectedSerialPath.isEmpty) ||
+                    (model.transportKind == .bluetooth && model.selectedBLEPeripheralID == nil)
+                )
 
                 Toggle("Capture Input", isOn: $model.captureInput)
                     .toggleStyle(.switch)

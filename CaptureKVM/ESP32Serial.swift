@@ -4,11 +4,17 @@ import os
 
 private let serialLog = Logger(subsystem: "Trustonica.CaptureKVM", category: "ESP32Serial")
 
-final class ESP32Serial {
+final class ESP32Serial: FrameTransport {
     private var fd: Int32 = -1
     private(set) var negotiatedBaud: Int = 0
     var onConnectionChanged: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
+
+    var isConnected: Bool { fd >= 0 }
+    var statusDescription: String {
+        guard isConnected else { return "ESP32 Disconnected" }
+        return negotiatedBaud > 0 ? "ESP32 @ \(negotiatedBaud)" : "ESP32 Connected"
+    }
 
     // Tried high-to-low. The firmware writes a single 0xAA back when it sees a
     // FRAME_TYPE_PING (0x80) frame; whichever baud the pong arrives on, we keep.
