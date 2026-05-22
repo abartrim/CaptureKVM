@@ -147,7 +147,7 @@ The sketch uses the **Arduino-ESP32** core (3.x) and **h2zero's NimBLE-Arduino**
 | USB Mode             | **USB-OTG (TinyUSB)**                  |
 | Upload Mode          | **UART0 / Hardware CDC**               |
 | CPU Frequency        | 240 MHz (WiFi)                         |
-| Flash Mode           | QIO 80 MHz                             |
+| Flash Mode           | **DIO 80 MHz** (universal across S3 flash chips; QIO doesn't work on every clone board) |
 | Flash Size           | 8 MB                                   |
 | Partition Scheme     | 8M with spiffs (3MB APP/1.5MB SPIFFS)  |
 | PSRAM                | **Disabled** (gives a universal binary across all S3 module variants) |
@@ -166,7 +166,7 @@ The sketch uses the **Arduino-ESP32** core (3.x) and **h2zero's NimBLE-Arduino**
 
 ```sh
 ARDCLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
-FQBN="esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=8M,PartitionScheme=default_8MB,PSRAM=disabled,UploadMode=default,UploadSpeed=460800"
+FQBN="esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=8M,FlashMode=dio,PartitionScheme=default_8MB,PSRAM=disabled,UploadMode=default,UploadSpeed=460800"
 PORT="/dev/cu.usbmodemXXXX"
 
 "$ARDCLI" compile --fqbn "$FQBN" ESP32KVMFirmware

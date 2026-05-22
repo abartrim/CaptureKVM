@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SwiftUI
 import Combine
 import os
@@ -12,6 +13,7 @@ private let flashLog = Logger(subsystem: "Trustonica.CaptureKVM", category: "Fir
 @MainActor
 final class FirmwareFlasher: ObservableObject {
     @Published private(set) var isFlashing: Bool = false
+    @Published private(set) var isVerifying: Bool = false
     @Published private(set) var progressPercent: Int = 0
     @Published private(set) var lastLogLine: String = ""
     @Published private(set) var lastError: String?
@@ -19,18 +21,21 @@ final class FirmwareFlasher: ObservableObject {
 
     private var process: Process?
     private var stdoutBuffer: String = ""
+    private var portInUse: String = ""
 
     /// Flashes the bundled firmware to the given POSIX serial path (e.g.
     /// `/dev/cu.usbmodemXXXX`). The caller is responsible for closing any
     /// existing serial connection on that port first.
     func start(port: String) {
-        guard !isFlashing else { return }
+        guard !isFlashing, !isVerifying else { return }
         isFlashing = true
+        isVerifying = false
         progressPercent = 0
         lastLogLine = ""
         lastError = nil
         lastSuccess = false
         stdoutBuffer = ""
+        portInUse = port
 
         do {
             try launch(port: port)
@@ -115,13 +120,18 @@ final class FirmwareFlasher: ObservableObject {
                 guard let self else { return }
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
-                self.isFlashing = false
                 self.process = nil
                 if p.terminationStatus == 0 {
-                    self.lastSuccess = true
+                    flashLog.info("esptool exited cleanly, starting post-flash verify")
                     self.progressPercent = 100
-                    flashLog.info("flash succeeded")
+                    self.lastLogLine = "Flashed. Verifying device responds…"
+                    self.isVerifying = true
+                    // Give the chip a moment to reset and bring up the firmware.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        self.runVerify()
+                    }
                 } else {
+                    self.isFlashing = false
                     let msg = "esptool exited with status \(p.terminationStatus). See log."
                     self.lastError = msg
                     flashLog.error("\(msg, privacy: .public)")
@@ -154,6 +164,69 @@ final class FirmwareFlasher: ObservableObject {
     }
 
     private static let percentRegex = try! NSRegularExpression(pattern: "(\\d{1,3})\\s*%", options: [])
+
+    // MARK: - Post-flash verification
+    //
+    // esptool reporting "Hash of data verified" only means the bytes landed in
+    // flash; it doesn't tell us whether the device boots. Boot-loop conditions
+    // (e.g. flash-mode mismatch with the chip) still look like a successful
+    // flash. So after esptool finishes we open the same port, send a ping
+    // frame, and wait for the firmware's 0xAA pong byte. If that arrives, the
+    // chip really is running our firmware. If it times out, we surface that
+    // clearly instead of falsely claiming success.
+
+    private func runVerify() {
+        let ok = probeBootedFirmware(port: portInUse, perBaudTimeoutMs: 250)
+        isFlashing = false
+        isVerifying = false
+        if ok {
+            lastSuccess = true
+            lastLogLine = "Verified: ESP32 responded to a ping. Firmware is running."
+            flashLog.info("post-flash verify succeeded")
+        } else {
+            lastError = "Flash completed, but the device didn't respond to a ping afterwards. This usually means it's in a boot loop — most often a flash-mode mismatch with the chip on the board. Check the UART boot output, or try a different bundled firmware build."
+            flashLog.error("post-flash verify failed on \(self.portInUse, privacy: .public)")
+        }
+    }
+
+    private func probeBootedFirmware(port: String, perBaudTimeoutMs: Int) -> Bool {
+        let fd = Darwin.open(port, O_RDWR | O_NOCTTY | O_NONBLOCK)
+        guard fd >= 0 else {
+            flashLog.error("verify: open(\(port, privacy: .public)) failed errno=\(errno)")
+            return false
+        }
+        defer { close(fd) }
+
+        var tio = termios()
+        guard tcgetattr(fd, &tio) == 0 else { return false }
+        cfmakeraw(&tio)
+        tio.c_cflag |= (tcflag_t(CLOCAL) | tcflag_t(CREAD))
+        tio.c_cflag &= ~tcflag_t(CRTSCTS)
+
+        let pingFrame = HIDEncoder.frame(type: 0x80, payload: [])
+
+        // Match the bauds ESP32Serial.connect() probes, high to low.
+        for baud in [921600, 460800, 230400, 115200] {
+            cfsetispeed(&tio, speed_t(baud))
+            cfsetospeed(&tio, speed_t(baud))
+            guard tcsetattr(fd, TCSANOW, &tio) == 0 else { continue }
+            tcflush(fd, TCIOFLUSH)
+
+            pingFrame.withUnsafeBytes { buf in
+                _ = Darwin.write(fd, buf.baseAddress, buf.count)
+            }
+
+            let deadline = Date().addingTimeInterval(TimeInterval(perBaudTimeoutMs) / 1000.0)
+            var byte: UInt8 = 0
+            while Date() < deadline {
+                let n = Darwin.read(fd, &byte, 1)
+                if n == 1 && byte == 0xAA { return true }
+                if n < 0 && errno != EAGAIN { break }
+                usleep(2000)
+            }
+        }
+        return false
+    }
 
     private func handleLine(_ line: String) {
         lastLogLine = line

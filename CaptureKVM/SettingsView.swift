@@ -168,22 +168,26 @@ struct SettingsView: View {
                         if flasher.isFlashing {
                             Label("Flashing… \(flasher.progressPercent)%",
                                   systemImage: "arrow.triangle.2.circlepath")
+                        } else if flasher.isVerifying {
+                            Label("Verifying…", systemImage: "checkmark.bubble")
                         } else {
                             Label("Flash bundled firmware", systemImage: "memorychip")
                         }
                     }
-                    .disabled(model.selectedSerialPath.isEmpty || flasher.isFlashing)
+                    .disabled(model.selectedSerialPath.isEmpty || flasher.isFlashing || flasher.isVerifying)
 
                     Spacer()
-                    if flasher.isFlashing {
+                    if flasher.isFlashing || flasher.isVerifying {
                         ProgressView(value: Double(flasher.progressPercent), total: 100)
                             .frame(width: 140)
                     }
                 }
 
                 if flasher.lastSuccess {
-                    Label("Flash succeeded. ESP32 has rebooted.", systemImage: "checkmark.circle.fill")
+                    Label("Flash + verify succeeded. ESP32 is running the new firmware.",
+                          systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let err = flasher.lastError, !err.isEmpty {
                     Label(err, systemImage: "exclamationmark.triangle.fill")
