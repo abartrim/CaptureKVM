@@ -47,12 +47,23 @@ struct ContentView: View {
 
                 Toggle("Capture Input", isOn: $model.captureInput)
                     .toggleStyle(.switch)
+                    .disabled(!model.isConnected)
                     .help("When enabled, keyboard and mouse events over the video are forwarded to the ESP32.")
+
+                Button(model.isPasting ? "Pasting…" : "Paste to Target") {
+                    model.pasteFromClipboard()
+                }
+                .disabled(!model.isConnected || model.isPasting)
+                .help("Types the host clipboard into the target as keystrokes (also: Cmd+Shift+V while in capture mode).")
 
                 Spacer()
 
                 // Status
                 HStack(spacing: 12) {
+                    if model.captureInput {
+                        Label("Input captured — fn+Esc to release", systemImage: "keyboard.fill")
+                            .foregroundStyle(Color.accentColor)
+                    }
                     Label(model.captureStatusText, systemImage: model.captureStatusOK ? "camera.viewfinder" : "exclamationmark.triangle")
                         .foregroundStyle(model.captureStatusOK ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
                     Label(model.serialStatusText, systemImage: model.isConnected ? "cable.connector" : "bolt.horizontal.circle")
@@ -72,15 +83,6 @@ struct ContentView: View {
             ZStack {
                 CapturePreviewView(session: model.capture.session)
                     .background(Color.black)
-                    .overlay(alignment: .topLeading) {
-                        if model.captureInput {
-                            Text("Input captured — press fn+Esc to release")
-                                .padding(6)
-                                .background(.thinMaterial)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .padding()
-                        }
-                    }
 
                 // Transparent input layer to receive NSEvents
                 InputForwarderView(
@@ -91,7 +93,8 @@ struct ContentView: View {
                     onMouseMove: { dx, dy in model.handleMouseMove(dx: dx, dy: dy) },
                     onMouseButton: { down, button in model.handleMouseButton(down: down, button: button) },
                     onScroll: { dx, dy in model.handleScroll(dx: dx, dy: dy) },
-                    onEscapeRelease: { model.captureInput = false }
+                    onEscapeRelease: { model.captureInput = false },
+                    onPasteFromHost: { model.pasteFromClipboard() }
                 )
                 .allowsHitTesting(model.captureInput) // Only intercept when active
             }

@@ -79,6 +79,54 @@ enum KeycodeMap {
     }
 }
 
+// MARK: - Clipboard paste support
+
+/// Maps a printable character to the HID usage required to type it on a US keyboard,
+/// plus whether the Shift modifier is needed. Used by paste-from-host.
+enum USCharacterMap {
+    static func usage(for ch: Character) -> (usage: UInt8, shift: Bool)? {
+        return table[ch]
+    }
+
+    private static let table: [Character: (UInt8, Bool)] = {
+        var m: [Character: (UInt8, Bool)] = [:]
+        // a-z / A-Z
+        for (i, c) in Array("abcdefghijklmnopqrstuvwxyz").enumerated() {
+            let u = UInt8(0x04 + i)
+            m[c] = (u, false)
+            m[Character(String(c).uppercased())] = (u, true)
+        }
+        // Top-row digits and their shifted symbols
+        let digits: [(Character, UInt8, Character)] = [
+            ("1", 0x1E, "!"), ("2", 0x1F, "@"), ("3", 0x20, "#"),
+            ("4", 0x21, "$"), ("5", 0x22, "%"), ("6", 0x23, "^"),
+            ("7", 0x24, "&"), ("8", 0x25, "*"), ("9", 0x26, "("),
+            ("0", 0x27, ")"),
+        ]
+        for (d, u, s) in digits { m[d] = (u, false); m[s] = (u, true) }
+        // Punctuation: unshifted / shifted
+        let punct: [(Character, UInt8, Character)] = [
+            ("-", 0x2D, "_"),
+            ("=", 0x2E, "+"),
+            ("[", 0x2F, "{"),
+            ("]", 0x30, "}"),
+            ("\\", 0x31, "|"),
+            (";", 0x33, ":"),
+            ("'", 0x34, "\""),
+            ("`", 0x35, "~"),
+            (",", 0x36, "<"),
+            (".", 0x37, ">"),
+            ("/", 0x38, "?"),
+        ]
+        for (b, u, s) in punct { m[b] = (u, false); m[s] = (u, true) }
+        // Whitespace
+        m[" "] = (0x2C, false)
+        m["\n"] = (0x28, false)  // LF -> Return
+        m["\t"] = (0x2B, false)
+        return m
+    }()
+}
+
 enum HIDEncoder {
     static func crc8(data: [UInt8]) -> UInt8 {
         var crc: UInt8 = 0x00

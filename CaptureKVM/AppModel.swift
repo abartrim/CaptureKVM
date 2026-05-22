@@ -14,6 +14,9 @@ final class AppModel: ObservableObject {
     @Published var isConnected: Bool = false
     @Published var lastSerialError: String = ""
 
+    // Paste-from-host state
+    @Published var isPasting: Bool = false
+
     // Input capture toggle
     @Published var captureInput: Bool = false
 
@@ -43,7 +46,10 @@ final class AppModel: ObservableObject {
         setupVideoDeviceWatcher()
         setupSerialPollTimer()
         serial.onConnectionChanged = { [weak self] connected in
-            DispatchQueue.main.async { self?.isConnected = connected }
+            DispatchQueue.main.async {
+                self?.isConnected = connected
+                if !connected { self?.captureInput = false }
+            }
         }
         serial.onError = { [weak self] message in
             DispatchQueue.main.async { self?.lastSerialError = message }
@@ -186,6 +192,39 @@ final class AppModel: ObservableObject {
         report[1] = 0 // reserved
         let keys = Array(pressedUsages.prefix(6))
         for (i, k) in keys.enumerated() { report[2 + i] = k }
+        let frame = HIDEncoder.frame(type: 0x01, payload: report)
+        serial.send(frame: frame)
+    }
+
+    // MARK: - Paste from host
+
+    func pasteFromClipboard() {
+        guard !isPasting, isConnected else { return }
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        isPasting = true
+        Task { [weak self] in
+            await self?.sendAsKeystrokes(text)
+            self?.isPasting = false
+        }
+    }
+
+    private func sendAsKeystrokes(_ text: String) async {
+        for ch in text {
+            if ch == "\r" { continue } // collapse \r\n to a single Return
+            guard let (usage, shift) = USCharacterMap.usage(for: ch) else { continue }
+            sendOneShotKey(modifier: shift ? 0x02 : 0, key: usage)
+            try? await Task.sleep(nanoseconds: 8_000_000)
+            sendOneShotKey(modifier: 0, key: 0)
+            try? await Task.sleep(nanoseconds: 8_000_000)
+        }
+    }
+
+    /// Sends a single keyboard frame WITHOUT touching pressedUsages/modifiers
+    /// (so it can't conflict with the user's live keystroke state).
+    private func sendOneShotKey(modifier: UInt8, key: UInt8) {
+        var report = [UInt8](repeating: 0, count: 8)
+        report[0] = modifier
+        report[2] = key
         let frame = HIDEncoder.frame(type: 0x01, payload: report)
         serial.send(frame: frame)
     }

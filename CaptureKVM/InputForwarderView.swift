@@ -10,6 +10,7 @@ struct InputForwarderView: NSViewRepresentable {
     var onMouseButton: (Bool, Int) -> Void
     var onScroll: (CGFloat, CGFloat) -> Void
     var onEscapeRelease: () -> Void
+    var onPasteFromHost: () -> Void
 
     func makeNSView(context: Context) -> ForwarderView {
         let v = ForwarderView()
@@ -20,6 +21,7 @@ struct InputForwarderView: NSViewRepresentable {
         v.onMouseButton = onMouseButton
         v.onScroll = onScroll
         v.onEscapeRelease = onEscapeRelease
+        v.onPasteFromHost = onPasteFromHost
         return v
     }
 
@@ -40,6 +42,7 @@ struct InputForwarderView: NSViewRepresentable {
         var onMouseButton: ((Bool, Int) -> Void)?
         var onScroll: ((CGFloat, CGFloat) -> Void)?
         var onEscapeRelease: (() -> Void)?
+        var onPasteFromHost: (() -> Void)?
 
         private var trackingArea: NSTrackingArea?
         private var cursorCaptured: Bool = false
@@ -101,6 +104,13 @@ struct InputForwarderView: NSViewRepresentable {
             // fn+Esc releases capture; plain Esc passes through to the target.
             if event.keyCode == 53, event.modifierFlags.contains(.function) {
                 onEscapeRelease?()
+                return
+            }
+            // Cmd+Shift+V pastes the host clipboard into the target (synthesized keystrokes).
+            if event.keyCode == 9,
+               event.modifierFlags.contains(.command),
+               event.modifierFlags.contains(.shift) {
+                onPasteFromHost?()
                 return
             }
             onKeyDown?(event)
