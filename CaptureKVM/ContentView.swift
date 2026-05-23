@@ -95,44 +95,61 @@ struct ContentView: View {
 
     private var actionBar: some View {
         HStack(spacing: 10) {
-            Picker("Video", selection: $model.selectedVideoUniqueID) {
-                Text("— Select —").tag("")
-                ForEach(model.videoDevices, id: \.uniqueID) { device in
-                    Text(device.localizedName).tag(device.uniqueID)
+            Picker("Mode", selection: $model.connectionMode) {
+                ForEach(ConnectionMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
                 }
             }
-            .frame(minWidth: 180, maxWidth: 240)
-            .onChange(of: model.selectedVideoUniqueID) { _, newValue in
-                model.selectVideoDevice(uniqueID: newValue)
-            }
+            .frame(width: 160)
 
-            Picker("Link", selection: $model.transportKind) {
-                ForEach(TransportKind.allCases) { t in Text(t.rawValue).tag(t) }
-            }
-            .frame(width: 150)
-            .disabled(model.isConnected)
-            .onChange(of: model.transportKind) { _, newKind in
-                if newKind == .bluetooth { model.startBLEScan() }
-                else { model.stopBLEScan() }
-            }
-
-            if model.transportKind == .usbSerial {
-                Picker("ESP32", selection: $model.selectedSerialPath) {
+            if model.connectionMode == .local {
+                Picker("Video", selection: $model.selectedVideoUniqueID) {
                     Text("— Select —").tag("")
-                    ForEach(model.serialPorts, id: \.self) { port in
-                        Text(port).tag(port)
+                    ForEach(model.videoDevices, id: \.uniqueID) { device in
+                        Text(device.localizedName).tag(device.uniqueID)
                     }
                 }
-                .frame(minWidth: 200, maxWidth: 260)
+                .frame(minWidth: 180, maxWidth: 240)
+                .onChange(of: model.selectedVideoUniqueID) { _, newValue in
+                    model.selectVideoDevice(uniqueID: newValue)
+                }
+
+                Picker("Link", selection: $model.transportKind) {
+                    ForEach(TransportKind.allCases) { t in Text(t.rawValue).tag(t) }
+                }
+                .frame(width: 150)
+                .disabled(model.isConnected)
+                .onChange(of: model.transportKind) { _, newKind in
+                    if newKind == .bluetooth { model.startBLEScan() }
+                    else { model.stopBLEScan() }
+                }
+
+                if model.transportKind == .usbSerial {
+                    Picker("ESP32", selection: $model.selectedSerialPath) {
+                        Text("— Select —").tag("")
+                        ForEach(model.serialPorts, id: \.self) { port in
+                            Text(port).tag(port)
+                        }
+                    }
+                    .frame(minWidth: 200, maxWidth: 260)
+                } else {
+                    Picker("ESP32", selection: $model.selectedBLEPeripheralID) {
+                        Text(model.blePeripherals.isEmpty ? "— Scanning… —" : "— Select —")
+                            .tag(UUID?.none)
+                        ForEach(model.blePeripherals) { p in
+                            Text(p.name).tag(UUID?.some(p.id))
+                        }
+                    }
+                    .frame(minWidth: 200, maxWidth: 260)
+                }
             } else {
-                Picker("ESP32", selection: $model.selectedBLEPeripheralID) {
-                    Text(model.blePeripherals.isEmpty ? "— Scanning… —" : "— Select —")
-                        .tag(UUID?.none)
-                    ForEach(model.blePeripherals) { p in
-                        Text(p.name).tag(UUID?.some(p.id))
-                    }
-                }
-                .frame(minWidth: 200, maxWidth: 260)
+                TextField("Agent URL", text: $model.remoteBaseURL)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 220, maxWidth: 280)
+
+                SecureField("Auth token", text: $model.remoteAuthToken)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 180, maxWidth: 240)
             }
 
             Button(model.isConnected ? "Disconnect" : "Connect") {
@@ -141,8 +158,11 @@ struct ContentView: View {
             .fixedSize()
             .keyboardShortcut(.return, modifiers: [.command])
             .disabled(
-                (model.transportKind == .usbSerial && model.selectedSerialPath.isEmpty) ||
-                (model.transportKind == .bluetooth && model.selectedBLEPeripheralID == nil)
+                model.connectionMode == .local
+                    ? ((model.transportKind == .usbSerial && model.selectedSerialPath.isEmpty) ||
+                       (model.transportKind == .bluetooth && model.selectedBLEPeripheralID == nil))
+                    : (model.remoteBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                       model.remoteAuthToken.isEmpty)
             )
 
             Toggle("Capture Input", isOn: $model.captureInput)
@@ -173,8 +193,28 @@ struct ContentView: View {
 
     private var previewArea: some View {
         ZStack {
-            CapturePreviewView(displayLayer: model.capture.displayLayer)
-                .background(Color.black)
+            if model.connectionMode == .local {
+                CapturePreviewView(displayLayer: model.capture.displayLayer)
+                    .background(Color.black)
+            } else {
+                Color.black
+                    .overlay {
+                        VStack(spacing: 10) {
+                            Image(systemName: "network")
+                                .font(.system(size: 42))
+                                .foregroundStyle(.secondary)
+                            Text("Remote HID ready; remote video next.")
+                                .font(.headline)
+                            Text(model.isConnected
+                                 ? "This build can negotiate a remote session and send encrypted keyboard and mouse reports to the Go agent. Remote UDP video receive/decode is the next client slice."
+                                 : "Connect to a remote agent to exercise the new control plane and UDP input path.")
+                                .font(.callout)
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: 460)
+                        }
+                    }
+            }
 
             InputForwarderView(
                 isActive: model.captureInput,
@@ -259,7 +299,7 @@ struct ContentView: View {
                 systemImage: model.captureStatusOK ? "video.fill" : "video.slash",
                 active: model.captureStatusOK,
                 color: model.captureStatusOK ? .green : .secondary,
-                help: model.captureStatusOK ? "Video signal OK" : "No video signal"
+                help: model.captureStatusText
             )
 
             StatusIcon(
@@ -267,8 +307,8 @@ struct ContentView: View {
                 active: model.isConnected,
                 color: model.isConnected ? .green : .secondary,
                 help: model.isConnected
-                    ? "\(model.transportKind.rawValue) connected · \(model.serialStatusText)"
-                    : "\(model.transportKind.rawValue) not connected"
+                    ? "\(linkLabel) connected · \(model.serialStatusText)"
+                    : "\(linkLabel) not connected"
             )
 
             // HID enumeration on the target. We only know this when the firmware tells us
@@ -291,24 +331,36 @@ struct ContentView: View {
     }
 
     private var linkIconName: String {
+        if model.connectionMode == .remote {
+            return model.isConnected ? "network" : "network.slash"
+        }
         switch model.transportKind {
         case .usbSerial: return model.isConnected ? "cable.connector" : "cable.connector.slash"
         case .bluetooth: return model.isConnected ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash"
         }
     }
 
+    private var linkLabel: String {
+        model.connectionMode == .remote ? "Remote over IP" : model.transportKind.rawValue
+    }
+
     private var hidIconActive: Bool {
+        if model.connectionMode == .remote { return model.isConnected }
         model.isConnected && model.transportKind == .usbSerial && model.hidMountedOnTarget
     }
 
     private var hidIconColor: Color {
         guard model.isConnected else { return .secondary }
+        if model.connectionMode == .remote { return .green }
         if model.transportKind != .usbSerial { return .secondary }    // unknown on BLE
         return model.hidMountedOnTarget ? .green : .orange
     }
 
     private var hidIconHelp: String {
-        guard model.isConnected else { return "ESP32 not connected" }
+        guard model.isConnected else { return model.connectionMode == .remote ? "Remote agent not connected" : "ESP32 not connected" }
+        if model.connectionMode == .remote {
+            return "Remote HID reports are being sent to the Go agent over encrypted UDP"
+        }
         if model.transportKind != .usbSerial {
             return "HID status only reported over USB Serial. Connect via USB to verify the target sees the HID device."
         }
