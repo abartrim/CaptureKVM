@@ -30,6 +30,7 @@ This repository now includes the first remote-mode slice:
 - ESP32 serial backend
 - ffmpeg-supervised H.264 Annex B encoder pipeline
 - macOS remote-mode controls for agent URL/token plus encrypted UDP keyboard and mouse sends
+- macOS UDP video receive, fragment reassembly, and H.264 sample-buffer rendering path
 
 ## Raspberry Pi setup
 
@@ -39,7 +40,7 @@ This repository now includes the first remote-mode slice:
 4. Install `ffmpeg` if you want the built-in encoder command path.
 5. Start `capturekvm-agent`.
 
-For early smoke tests on a development machine, `--dev-insecure` defaults the HID backend to `mock` so you can exercise the control plane and UDP path before wiring the ESP32. The macOS client can now negotiate a remote session and send input over UDP; remote video receive/decode is the next client slice.
+For early smoke tests on a development machine, `--dev-insecure` defaults the HID backend to `mock` so you can exercise the control plane and UDP path before wiring the ESP32. The macOS client can now negotiate a remote session, send input over UDP, and listen for the agent's encrypted H.264 UDP preview stream.
 
 ## Why binary UDP
 

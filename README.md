@@ -132,6 +132,7 @@ The repository now also includes an initial Go-based `capturekvm-agent` under [`
 - AES-256-GCM protected UDP input packets
 - ESP32 serial backend compatibility with the existing firmware framing
 - initial macOS remote-input client path for session negotiation and encrypted UDP keyboard/mouse sends
+- initial macOS remote UDP video receive/decode path for agent-sent H.264 Annex B frames
 
 See [docs/kvm-over-ip.md](docs/kvm-over-ip.md), [docs/kvm-over-ip-security.md](docs/kvm-over-ip-security.md), and [docs/protocol.md](docs/protocol.md) for the current remote-mode design and protocol notes.
 

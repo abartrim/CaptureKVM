@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
         didSet {
             guard oldValue != connectionMode else { return }
             if oldValue == .local {
+                capture.stop()
                 switch transportKind {
                 case .usbSerial:
                     if serial.isConnected { serial.disconnect() }
@@ -34,8 +35,14 @@ final class AppModel: ObservableObject {
                 let sessionID = remoteSessionID
                 remoteSessionID = ""
                 remoteInput.disconnect()
+                remoteVideo.disconnect()
+                remoteVideoReceiving = false
+                remoteVideoStatusText = "Remote video disconnected"
                 if !baseURL.isEmpty, !token.isEmpty, !sessionID.isEmpty {
                     Task { await remoteControl.closeSession(baseURLString: baseURL, authToken: token, sessionID: sessionID) }
+                }
+                if !selectedVideoUniqueID.isEmpty {
+                    selectVideoDevice(uniqueID: selectedVideoUniqueID)
                 }
             }
             isConnected = false
@@ -60,6 +67,8 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(remoteAuthToken, forKey: "remoteAuthToken") }
     }
     @Published var remoteSessionID: String = ""
+    @Published var remoteVideoReceiving: Bool = false
+    @Published var remoteVideoStatusText: String = "Remote video disconnected"
 
     // Transport selection + Bluetooth
     @Published var transportKind: TransportKind = TransportKind(rawValue: UserDefaults.standard.string(forKey: "transportKind") ?? "") ?? .usbSerial {
@@ -124,6 +133,7 @@ final class AppModel: ObservableObject {
     let bluetooth = BluetoothTransport()
     let remoteControl = RemoteControlAPI()
     let remoteInput = RemoteUDPInputSink()
+    let remoteVideo: RemoteUDPVideoSource
 
     /// Direct switch dispatch on the hot path — no protocol witness call.
     private var transport: FrameTransport {
@@ -155,6 +165,7 @@ final class AppModel: ObservableObject {
     private var remoteKeepAliveTimer: DispatchSourceTimer?
 
     init() {
+        remoteVideo = RemoteUDPVideoSource(displayLayer: capture.displayLayer)
         setupMouseTimer()
         setupVideoDeviceWatcher()
         setupSerialPollTimer()
@@ -240,6 +251,23 @@ final class AppModel: ObservableObject {
             }
         }
         remoteInput.onError = errHandler
+        remoteVideo.onConnectionChanged = { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.remoteVideoStatusText = self.remoteVideo.statusDescription
+                if !self.remoteVideo.isConnected {
+                    self.remoteVideoReceiving = false
+                }
+            }
+        }
+        remoteVideo.onReceivingChanged = { [weak self] receiving in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.remoteVideoReceiving = receiving
+                self.remoteVideoStatusText = self.remoteVideo.statusDescription
+            }
+        }
+        remoteVideo.onError = errHandler
     }
 
     deinit {
@@ -252,10 +280,12 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - UI helpers
-    var captureStatusOK: Bool { connectionMode == .local && capture.isRunning }
+    var captureStatusOK: Bool {
+        connectionMode == .local ? capture.isRunning : remoteVideoReceiving
+    }
     var captureStatusText: String {
         if connectionMode == .remote {
-            return "Remote video receiver not wired yet"
+            return remoteVideoStatusText
         }
         return capture.isRunning ? "Video OK" : "No Video"
     }
@@ -281,6 +311,7 @@ final class AppModel: ObservableObject {
     func selectVideoDevice(uniqueID: String) {
         let id = uniqueID
         if let device = videoDevices.first(where: { $0.uniqueID == id }) {
+            remoteVideo.disconnect()
             capture.start(device: device)
         }
     }
@@ -377,6 +408,9 @@ final class AppModel: ObservableObject {
             let sessionID = remoteSessionID
             remoteSessionID = ""
             remoteInput.disconnect()
+            remoteVideo.disconnect()
+            remoteVideoReceiving = false
+            remoteVideoStatusText = "Remote video disconnected"
             captureInput = false
             if !baseURL.isEmpty, !token.isEmpty, !sessionID.isEmpty {
                 Task { await remoteControl.closeSession(baseURLString: baseURL, authToken: token, sessionID: sessionID) }
@@ -599,6 +633,13 @@ final class AppModel: ObservableObject {
                     baseURLString: self.remoteBaseURL,
                     authToken: self.remoteAuthToken
                 )
+                self.capture.stop()
+                try await self.remoteVideo.connect(configuration: .init(
+                    host: session.udpHost,
+                    port: session.videoPort,
+                    sessionID: session.sessionID,
+                    sessionKey: session.sessionKey
+                ))
                 try await self.remoteInput.connect(configuration: .init(
                     host: session.udpHost,
                     port: session.inputPort,
@@ -615,6 +656,9 @@ final class AppModel: ObservableObject {
                     self.remoteSessionID = ""
                     self.lastSerialError = "Remote connect failed: \(error.localizedDescription)"
                     self.remoteInput.disconnect()
+                    self.remoteVideo.disconnect()
+                    self.remoteVideoReceiving = false
+                    self.remoteVideoStatusText = "Remote video disconnected"
                 }
             }
         }

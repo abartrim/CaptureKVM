@@ -193,27 +193,25 @@ struct ContentView: View {
 
     private var previewArea: some View {
         ZStack {
-            if model.connectionMode == .local {
-                CapturePreviewView(displayLayer: model.capture.displayLayer)
-                    .background(Color.black)
-            } else {
-                Color.black
-                    .overlay {
-                        VStack(spacing: 10) {
-                            Image(systemName: "network")
-                                .font(.system(size: 42))
-                                .foregroundStyle(.secondary)
-                            Text("Remote HID ready; remote video next.")
-                                .font(.headline)
-                            Text(model.isConnected
-                                 ? "This build can negotiate a remote session and send encrypted keyboard and mouse reports to the Go agent. Remote UDP video receive/decode is the next client slice."
-                                 : "Connect to a remote agent to exercise the new control plane and UDP input path.")
-                                .font(.callout)
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: 460)
-                        }
-                    }
+            CapturePreviewView(displayLayer: model.capture.displayLayer)
+                .background(Color.black)
+
+            if model.connectionMode == .remote && !model.captureStatusOK {
+                Color.black.opacity(0.55)
+                VStack(spacing: 10) {
+                    Image(systemName: "network")
+                        .font(.system(size: 42))
+                        .foregroundStyle(.secondary)
+                    Text(model.isConnected ? "Waiting for remote video…" : "Remote agent disconnected")
+                        .font(.headline)
+                    Text(model.isConnected
+                         ? "The client has negotiated the session and is listening for encrypted H.264 video on the agent's UDP video port."
+                         : "Connect to a remote agent to begin the remote preview stream.")
+                        .font(.callout)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: 460)
+                }
             }
 
             InputForwarderView(
