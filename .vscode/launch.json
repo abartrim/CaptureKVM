@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug capturekvm-agent",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/agent/cmd/capturekvm-agent",
+      "cwd": "${workspaceFolder}/agent",
+      "args": [
+        "--config",
+        "${workspaceFolder}/agent/examples/config.example.yaml"
+      ]
+    }
+  ]
+}
