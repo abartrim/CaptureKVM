@@ -26,11 +26,16 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	sessions := control.NewManager(time.Minute)
+	videoStream := video.NewStream(cfg.Video, nil)
 	inputReceiver, err := udp.NewInputReceiver(cfg.UDP, sessions, backend, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(cfg, "test", backend, sessions, inputReceiver, video.NewStream(cfg.Video), nil)
+	videoSender, err := udp.NewVideoSender(cfg.UDP, cfg.Video, sessions, videoStream, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(cfg, "test", backend, sessions, inputReceiver, videoSender, videoStream, nil)
 }
 
 func TestHealthEndpoint(t *testing.T) {

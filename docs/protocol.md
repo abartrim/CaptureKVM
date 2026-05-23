@@ -71,6 +71,35 @@ The receiver:
 - keeps a per-session per-kind replay window
 - forwards accepted keyboard and mouse payloads to the configured HID backend
 
+## Video packet semantics
+
+`video_ping` is the client's first UDP packet on the video socket. It has an empty payload and is authenticated with the session key. The agent uses its source address as the return path for video datagrams.
+
+`video_config` payload is a fixed 20-byte binary structure:
+
+| Offset | Field |
+| --- | --- |
+| 0 | codec (`0x01` = H.264) |
+| 1 | format (`0x01` = Annex B) |
+| 2..3 | width |
+| 4..5 | height |
+| 6..7 | fps |
+| 8..11 | bitrate kbps |
+| 12..13 | keyframe interval |
+| 14 | hardware encode enabled |
+| 15 | no B-frames enabled |
+
+`video_frame` payload starts with a 12-byte fragment header:
+
+| Offset | Field |
+| --- | --- |
+| 0..3 | frame_id |
+| 4..7 | total_frame_bytes |
+| 8..9 | fragment_index |
+| 10..11 | fragment_count |
+
+The remaining payload bytes are the Annex B fragment data for that frame. The packet header `flags` field uses bit 0 to mark keyframes.
+
 ## Session negotiation
 
 `POST /api/session` returns:

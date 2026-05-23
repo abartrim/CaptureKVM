@@ -29,6 +29,7 @@ video:
   keyframe_interval: 30
   hardware_encode: true
   no_b_frames: true
+  encoder_command: []
 
 hid:
   backend: "esp32-serial"

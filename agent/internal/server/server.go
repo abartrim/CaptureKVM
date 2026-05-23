@@ -18,18 +18,20 @@ type Server struct {
 	backend       hid.Backend
 	sessions      *control.Manager
 	inputReceiver *udp.InputReceiver
+	videoSender   *udp.VideoSender
 	videoStream   *video.Stream
 	logger        *log.Logger
 	httpServer    *http.Server
 }
 
-func New(cfg config.Config, version string, backend hid.Backend, sessions *control.Manager, inputReceiver *udp.InputReceiver, videoStream *video.Stream, logger *log.Logger) *Server {
+func New(cfg config.Config, version string, backend hid.Backend, sessions *control.Manager, inputReceiver *udp.InputReceiver, videoSender *udp.VideoSender, videoStream *video.Stream, logger *log.Logger) *Server {
 	s := &Server{
 		cfg:           cfg,
 		version:       version,
 		backend:       backend,
 		sessions:      sessions,
 		inputReceiver: inputReceiver,
+		videoSender:   videoSender,
 		videoStream:   videoStream,
 		logger:        logger,
 	}

@@ -55,15 +55,25 @@ func main() {
 	defer backend.Close()
 
 	sessions := control.NewManager(time.Duration(cfg.Auth.SessionTTLSeconds) * time.Second)
-	videoStream := video.NewStream(cfg.Video)
+	videoStream := video.NewStream(cfg.Video, logger)
 	inputReceiver, err := udp.NewInputReceiver(cfg.UDP, sessions, backend, logger)
 	if err != nil {
 		logger.Fatalf("create UDP input receiver: %v", err)
 	}
+	videoSender, err := udp.NewVideoSender(cfg.UDP, cfg.Video, sessions, videoStream, logger)
+	if err != nil {
+		logger.Fatalf("create UDP video sender: %v", err)
+	}
 
-	srv := server.New(cfg, version, backend, sessions, inputReceiver, videoStream, logger)
+	srv := server.New(cfg, version, backend, sessions, inputReceiver, videoSender, videoStream, logger)
 	if err := inputReceiver.Start(ctx); err != nil {
 		logger.Fatalf("start UDP input receiver: %v", err)
+	}
+	if err := videoSender.Start(ctx); err != nil {
+		logger.Fatalf("start UDP video sender: %v", err)
+	}
+	if err := videoStream.Start(ctx); err != nil {
+		logger.Printf("video stream start failed: %v", err)
 	}
 
 	go func() {

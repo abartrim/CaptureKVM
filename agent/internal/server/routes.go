@@ -45,6 +45,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	hidStatus := s.backend.Status(r.Context())
+	videoStatus := s.videoStream.Status()
+	videoSenderStatus := s.videoSender.Status()
 	writeJSON(w, http.StatusOK, statusResponse{
 		OK:      true,
 		Version: s.version,
@@ -60,7 +62,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Width:   s.cfg.Video.Width,
 			Height:  s.cfg.Video.Height,
 			FPS:     s.cfg.Video.FPS,
-			Healthy: s.videoStream.Status().Healthy,
+			Healthy: videoStatus.Healthy,
+			Detail:  videoStatus.Detail,
+			Stats:   videoSenderStatus.Counters,
+			Peers:   videoSenderStatus.Peers,
+			Frames:  videoStatus.Frames,
 		},
 		HID:  hidStatus,
 		Auth: authState{Enabled: !s.cfg.DevInsecure},
@@ -149,6 +155,7 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVideoSource(w http.ResponseWriter, _ *http.Request) {
 	status := s.videoStream.Status()
+	senderStatus := s.videoSender.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true,
 		"video": map[string]any{
@@ -161,8 +168,13 @@ func (s *Server) handleVideoSource(w http.ResponseWriter, _ *http.Request) {
 			"keyframe_interval": s.cfg.Video.KeyframeInterval,
 			"hardware_encode":   s.cfg.Video.HardwareEncode,
 			"no_b_frames":       s.cfg.Video.NoBFrames,
+			"encoder_command":   s.cfg.Video.EncoderCommand,
 			"healthy":           status.Healthy,
 			"detail":            status.Detail,
+			"frames":            status.Frames,
+			"subscribers":       status.Subscribers,
+			"udp_peers":         senderStatus.Peers,
+			"udp_stats":         senderStatus.Counters,
 		},
 	})
 }

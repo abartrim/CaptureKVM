@@ -31,11 +31,15 @@ type udpStatus struct {
 }
 
 type videoState struct {
-	Codec   string `json:"codec"`
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
-	FPS     int    `json:"fps"`
-	Healthy bool   `json:"healthy"`
+	Codec   string            `json:"codec"`
+	Width   int               `json:"width"`
+	Height  int               `json:"height"`
+	FPS     int               `json:"fps"`
+	Healthy bool              `json:"healthy"`
+	Detail  string            `json:"detail,omitempty"`
+	Stats   map[string]uint64 `json:"stats,omitempty"`
+	Peers   int               `json:"peers,omitempty"`
+	Frames  uint64            `json:"frames,omitempty"`
 }
 
 type authState struct {

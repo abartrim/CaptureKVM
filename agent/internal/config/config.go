@@ -59,15 +59,16 @@ type UDPConfig struct {
 }
 
 type VideoConfig struct {
-	Source           string `yaml:"source" json:"source"`
-	Codec            string `yaml:"codec" json:"codec"`
-	Width            int    `yaml:"width" json:"width"`
-	Height           int    `yaml:"height" json:"height"`
-	FPS              int    `yaml:"fps" json:"fps"`
-	BitrateKbps      int    `yaml:"bitrate_kbps" json:"bitrate_kbps"`
-	KeyframeInterval int    `yaml:"keyframe_interval" json:"keyframe_interval"`
-	HardwareEncode   bool   `yaml:"hardware_encode" json:"hardware_encode"`
-	NoBFrames        bool   `yaml:"no_b_frames" json:"no_b_frames"`
+	Source           string   `yaml:"source" json:"source"`
+	Codec            string   `yaml:"codec" json:"codec"`
+	Width            int      `yaml:"width" json:"width"`
+	Height           int      `yaml:"height" json:"height"`
+	FPS              int      `yaml:"fps" json:"fps"`
+	BitrateKbps      int      `yaml:"bitrate_kbps" json:"bitrate_kbps"`
+	KeyframeInterval int      `yaml:"keyframe_interval" json:"keyframe_interval"`
+	HardwareEncode   bool     `yaml:"hardware_encode" json:"hardware_encode"`
+	NoBFrames        bool     `yaml:"no_b_frames" json:"no_b_frames"`
+	EncoderCommand   []string `yaml:"encoder_command" json:"encoder_command"`
 }
 
 type HIDConfig struct {
@@ -195,6 +196,21 @@ func (c Config) Validate() error {
 	}
 	if c.UDP.InputPort <= 0 || c.UDP.VideoPort <= 0 {
 		return errors.New("udp input/video ports must be positive")
+	}
+	if strings.TrimSpace(c.Video.Source) == "" {
+		return errors.New("video.source is required")
+	}
+	if c.Video.Codec != "h264" {
+		return fmt.Errorf("unsupported video.codec %q", c.Video.Codec)
+	}
+	if c.Video.Width <= 0 || c.Video.Height <= 0 || c.Video.FPS <= 0 {
+		return errors.New("video width, height, and fps must be positive")
+	}
+	if c.Video.BitrateKbps <= 0 || c.Video.KeyframeInterval <= 0 {
+		return errors.New("video bitrate_kbps and keyframe_interval must be positive")
+	}
+	if len(c.Video.EncoderCommand) > 0 && strings.TrimSpace(c.Video.EncoderCommand[0]) == "" {
+		return errors.New("video.encoder_command[0] must not be empty")
 	}
 	switch c.HID.Backend {
 	case "mock":
