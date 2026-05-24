@@ -38,7 +38,7 @@ final class CaptureManager {
 
     func start(device: CaptureDeviceInfo) {
         if session.isRunning { session.stopRunning() }
-        displayLayer.sampleBufferRenderer.flush()
+        clearDisplayedFrame()
         session.beginConfiguration()
         if let input = input { session.removeInput(input); self.input = nil }
         let avDevice = AVCaptureDevice(uniqueID: device.uniqueID)
@@ -59,7 +59,11 @@ final class CaptureManager {
         if session.isRunning {
             session.stopRunning()
         }
-        displayLayer.sampleBufferRenderer.flush()
+        clearDisplayedFrame()
+    }
+
+    private func clearDisplayedFrame() {
+        displayLayer.flushAndRemoveImage()
     }
 
     /// Pick the highest-FPS format the device supports. Tiebreak on largest resolution.

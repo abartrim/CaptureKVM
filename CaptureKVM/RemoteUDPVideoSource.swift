@@ -126,7 +126,7 @@ final class RemoteUDPVideoSource {
             onReceivingChanged?(false)
         }
         DispatchQueue.main.async { [displayLayer] in
-            displayLayer.sampleBufferRenderer.flush()
+            displayLayer.flushAndRemoveImage()
         }
     }
 
@@ -278,7 +278,7 @@ final class RemoteUDPVideoSource {
         if formatNeedsRefresh {
             formatDescription = try makeFormatDescription(sps: sps, pps: pps)
             DispatchQueue.main.async { [displayLayer] in
-                displayLayer.sampleBufferRenderer.flush()
+                displayLayer.flushAndRemoveImage()
             }
         }
         guard let formatDescription, !sampleNALs.isEmpty else { return }
