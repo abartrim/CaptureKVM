@@ -40,6 +40,31 @@ func COBSEncode(input []byte) []byte {
 	return out
 }
 
+// COBSDecode reverses COBSEncode. Returns nil if the input is malformed.
+// The terminating 0x00 delimiter MUST already be stripped by the caller.
+func COBSDecode(input []byte) []byte {
+	out := make([]byte, 0, len(input))
+	read := 0
+	for read < len(input) {
+		code := input[read]
+		read++
+		if code == 0 {
+			return nil
+		}
+		for i := byte(1); i < code; i++ {
+			if read >= len(input) {
+				return nil
+			}
+			out = append(out, input[read])
+			read++
+		}
+		if code != 0xFF && read < len(input) {
+			out = append(out, 0x00)
+		}
+	}
+	return out
+}
+
 func Frame(frameType byte, payload []byte) []byte {
 	raw := make([]byte, 0, 2+len(payload))
 	raw = append(raw, frameType)
