@@ -50,7 +50,8 @@ func (e *Encoder) Command() ([]string, error) {
 		"ffmpeg",
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-fflags", "nobuffer",
+		"-fflags", "+genpts+nobuffer",
+		"-use_wallclock_as_timestamps", "1",
 		"-f", "v4l2",
 		"-framerate", strconv.Itoa(e.cfg.FPS),
 		"-video_size", fmt.Sprintf("%dx%d", e.cfg.Width, e.cfg.Height),
@@ -65,8 +66,14 @@ func (e *Encoder) Command() ([]string, error) {
 		"-bufsize", fmt.Sprintf("%dk", e.cfg.BitrateKbps*2),
 		"-preset", "ultrafast",
 		"-tune", "zerolatency",
-		"-bsf:v", "h264_metadata=aud=insert",
 	}
+	if codec == "libx264" {
+		command = append(command, "-x264-params", "repeat-headers=1")
+	}
+	command = append(command, "-bsf:v", strings.Join([]string{
+		"dump_extra=freq=keyframe",
+		"h264_metadata=aud=insert",
+	}, ","))
 	if e.cfg.NoBFrames {
 		command = append(command, "-bf", "0")
 	}

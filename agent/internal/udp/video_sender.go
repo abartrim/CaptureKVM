@@ -29,6 +29,7 @@ type VideoSenderStatus struct {
 type videoPeer struct {
 	addr       *net.UDPAddr
 	configSent bool
+	awaitingKeyframe bool
 	nextSeq    uint32
 }
 
@@ -187,11 +188,18 @@ func (s *VideoSender) broadcastFrame(frame video.Frame) {
 				continue
 			}
 		}
+		if peer.awaitingKeyframe && !frame.Keyframe {
+			continue
+		}
 		if err := s.sendFrame(session, peer.addr, frame); err != nil {
 			s.sendErrors.Add(1)
 			if s.logger != nil {
 				s.logger.Printf("send video frame: %v", err)
 			}
+			continue
+		}
+		if peer.awaitingKeyframe {
+			s.markPeerStreaming(sessionID)
 		}
 	}
 }
@@ -260,6 +268,16 @@ func (s *VideoSender) registerPeer(sessionID uint64, addr *net.UDPAddr) {
 		s.peers[sessionID] = peer
 	}
 	peer.addr = &net.UDPAddr{IP: append([]byte(nil), addr.IP...), Port: addr.Port, Zone: addr.Zone}
+	peer.configSent = false
+	peer.awaitingKeyframe = true
+}
+
+func (s *VideoSender) markPeerStreaming(sessionID uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if peer, ok := s.peers[sessionID]; ok {
+		peer.awaitingKeyframe = false
+	}
 }
 
 func (s *VideoSender) removePeer(sessionID uint64) {
@@ -279,6 +297,7 @@ func (s *VideoSender) snapshotPeers() map[uint64]videoPeer {
 		peers[id] = videoPeer{
 			addr:       &net.UDPAddr{IP: append([]byte(nil), peer.addr.IP...), Port: peer.addr.Port, Zone: peer.addr.Zone},
 			configSent: peer.configSent,
+			awaitingKeyframe: peer.awaitingKeyframe,
 			nextSeq:    peer.nextSeq,
 		}
 	}
