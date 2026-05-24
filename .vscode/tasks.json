@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Go agent",
+      "type": "shell",
+      "command": "go build ./cmd/capturekvm-agent",
+      "options": {
+        "cwd": "${workspaceFolder}/agent"
+      },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "Test Go agent",
+      "type": "shell",
+      "command": "go test ./...",
+      "options": {
+        "cwd": "${workspaceFolder}/agent"
+      },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "Run Go agent",
+      "type": "shell",
+      "command": "go run ./cmd/capturekvm-agent --config ./examples/config.example.yaml",
+      "options": {
+        "cwd": "${workspaceFolder}/agent"
+      },
+      "problemMatcher": "$go"
+    },
+    {
+      "label": "Format Go code",
+      "type": "shell",
+      "command": "gofmt -w $(find . -name '*.go')",
+      "options": {
+        "cwd": "${workspaceFolder}/agent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Vet Go code",
+      "type": "shell",
+      "command": "go vet ./...",
+      "options": {
+        "cwd": "${workspaceFolder}/agent"
+      },
+      "problemMatcher": "$go"
+    }
+  ]
+}

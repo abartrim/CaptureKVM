@@ -1,0 +1,45 @@
+server:
+  bind: "0.0.0.0:8080"
+  public_base_url: "http://capturekvm.local:8080"
+
+auth:
+  token: "CHANGE_ME"
+  session_ttl_seconds: 60
+
+crypto:
+  udp_suite: "AES-256-GCM"
+  key_bytes: 32
+  nonce_bytes: 12
+
+udp:
+  bind: "0.0.0.0:8090"
+  public_host: "capturekvm.local"
+  input_port: 8091
+  video_port: 8092
+  mtu: 1200
+  max_reorder_frames: 2
+
+video:
+  source: "/dev/video0"
+  codec: "h264"
+  width: 1280
+  height: 720
+  fps: 60
+  bitrate_kbps: 6000
+  keyframe_interval: 30
+  hardware_encode: true
+  no_b_frames: true
+  encoder_command: []
+
+hid:
+  backend: "esp32-serial"
+  esp32_serial:
+    port: "/dev/ttyACM0"
+    baud: 921600
+    auto_reconnect: true
+  pi_gadget:
+    keyboard: "/dev/hidg0"
+    mouse: "/dev/hidg1"
+
+logging:
+  level: "info"

@@ -10,6 +10,8 @@ struct SettingsView: View {
         TabView {
             keyboardTab
                 .tabItem { Label("Keyboard", systemImage: "keyboard") }
+            remoteTab
+                .tabItem { Label("Remote", systemImage: "network") }
             bluetoothTab
                 .tabItem { Label("Bluetooth", systemImage: "antenna.radiowaves.left.and.right") }
             firmwareTab
@@ -27,6 +29,43 @@ struct SettingsView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        .formStyle(.grouped)
+        .padding(.horizontal)
+    }
+
+    private var remoteTab: some View {
+        Form {
+            Section {
+                Picker("Mode", selection: $model.connectionMode) {
+                    ForEach(ConnectionMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+            } header: { Text("Connection mode") }
+
+            Section {
+                TextField("http://capturekvm.local:8080", text: $model.remoteBaseURL)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("Auth token", text: $model.remoteAuthToken)
+                    .textFieldStyle(.roundedBorder)
+            } header: { Text("Remote agent") } footer: {
+                Text("These values are only used in Remote over IP mode. The auth token is sent to the agent's HTTP control plane, and the returned UDP session key is then used to encrypt keyboard and mouse packets.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                LabeledContent("Session") {
+                    Text(model.remoteSessionID.isEmpty ? "—" : model.remoteSessionID)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+                LabeledContent("Link") {
+                    Text(model.serialStatusText)
+                        .foregroundStyle(model.isConnected ? .primary : .secondary)
+                }
+            } header: { Text("Status") }
         }
         .formStyle(.grouped)
         .padding(.horizontal)
@@ -160,7 +199,7 @@ struct SettingsView: View {
     }
 
     private var canManage: Bool {
-        model.isConnected && model.transportKind == .usbSerial
+        model.connectionMode == .local && model.isConnected && model.transportKind == .usbSerial
     }
 
     private var usbConnectionRow: some View {
@@ -178,6 +217,7 @@ struct SettingsView: View {
                 if canManage {
                     model.disconnect()
                 } else {
+                    if model.connectionMode != .local { model.connectionMode = .local }
                     if model.transportKind != .usbSerial { model.transportKind = .usbSerial }
                     model.connect()
                 }

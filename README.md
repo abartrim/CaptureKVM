@@ -123,6 +123,19 @@ If you want to build the app from source, modify the firmware, or just understan
 - Modifying and re-flashing the firmware
 - Memory usage, security model, known limitations
 
+## Optional KVM-over-IP agent
+
+The repository now also includes an initial Go-based `capturekvm-agent` under [`agent/`](agent/) for the optional remote mode groundwork:
+
+- authenticated HTTP control plane
+- short-lived session negotiation
+- AES-256-GCM protected UDP input packets
+- ESP32 serial backend compatibility with the existing firmware framing
+- initial macOS remote-input client path for session negotiation and encrypted UDP keyboard/mouse sends
+- initial macOS remote UDP video receive/decode path for agent-sent H.264 Annex B frames
+
+See [docs/kvm-over-ip.md](docs/kvm-over-ip.md), [docs/kvm-over-ip-security.md](docs/kvm-over-ip-security.md), and [docs/protocol.md](docs/protocol.md) for the current remote-mode design and protocol notes.
+
 ## License
 
 CaptureKVM is licensed under the **GNU General Public License v3.0**. See [LICENSE](LICENSE) for the full text. If you modify and distribute it (or anything based on it), you have to share your modifications under GPL v3 too — that's the deal.

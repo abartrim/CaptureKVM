@@ -4,6 +4,12 @@ import AVFoundation
 import Combine
 import CoreBluetooth
 
+enum ConnectionMode: String, CaseIterable, Identifiable {
+    case local = "Local"
+    case remote = "Remote over IP"
+    var id: String { rawValue }
+}
+
 enum TransportKind: String, CaseIterable, Identifiable {
     case usbSerial = "USB Serial"
     case bluetooth = "Bluetooth"
@@ -11,6 +17,40 @@ enum TransportKind: String, CaseIterable, Identifiable {
 }
 
 final class AppModel: ObservableObject {
+    @Published var connectionMode: ConnectionMode = ConnectionMode(rawValue: UserDefaults.standard.string(forKey: "connectionMode") ?? "") ?? .local {
+        didSet {
+            guard oldValue != connectionMode else { return }
+            if oldValue == .local {
+                capture.stop()
+                switch transportKind {
+                case .usbSerial:
+                    if serial.isConnected { serial.disconnect() }
+                case .bluetooth:
+                    if bluetooth.isConnected { bluetooth.disconnect() }
+                    stopBLEScan()
+                }
+            } else {
+                let baseURL = remoteBaseURL
+                let token = remoteAuthToken
+                let sessionID = remoteSessionID
+                remoteSessionID = ""
+                remoteInput.disconnect()
+                remoteVideo.disconnect()
+                remoteVideoReceiving = false
+                remoteVideoStatusText = "Remote video disconnected"
+                if !baseURL.isEmpty, !token.isEmpty, !sessionID.isEmpty {
+                    Task { await remoteControl.closeSession(baseURLString: baseURL, authToken: token, sessionID: sessionID) }
+                }
+                if !selectedVideoUniqueID.isEmpty {
+                    selectVideoDevice(uniqueID: selectedVideoUniqueID)
+                }
+            }
+            isConnected = false
+            captureInput = false
+            UserDefaults.standard.set(connectionMode.rawValue, forKey: "connectionMode")
+        }
+    }
+
     // Video
     @Published var videoDevices: [CaptureDeviceInfo] = []
     @Published var selectedVideoUniqueID: String = ""
@@ -20,10 +60,20 @@ final class AppModel: ObservableObject {
     @Published var selectedSerialPath: String = ""
     @Published var isConnected: Bool = false
     @Published var lastSerialError: String = ""
+    @Published var remoteBaseURL: String = UserDefaults.standard.string(forKey: "remoteBaseURL") ?? "" {
+        didSet { UserDefaults.standard.set(remoteBaseURL, forKey: "remoteBaseURL") }
+    }
+    @Published var remoteAuthToken: String = UserDefaults.standard.string(forKey: "remoteAuthToken") ?? "" {
+        didSet { UserDefaults.standard.set(remoteAuthToken, forKey: "remoteAuthToken") }
+    }
+    @Published var remoteSessionID: String = ""
+    @Published var remoteVideoReceiving: Bool = false
+    @Published var remoteVideoStatusText: String = "Remote video disconnected"
 
     // Transport selection + Bluetooth
     @Published var transportKind: TransportKind = TransportKind(rawValue: UserDefaults.standard.string(forKey: "transportKind") ?? "") ?? .usbSerial {
         didSet {
+            guard connectionMode == .local else { return }
             // Switching transports drops any live connection on the OLD transport so
             // isConnected always reflects the currently-selected transport's state.
             // Otherwise the selectors in the toolbar + Settings desync (e.g. user
@@ -81,6 +131,9 @@ final class AppModel: ObservableObject {
     let capture = CaptureManager()
     let serial = ESP32Serial()
     let bluetooth = BluetoothTransport()
+    let remoteControl = RemoteControlAPI()
+    let remoteInput = RemoteUDPInputSink()
+    let remoteVideo: RemoteUDPVideoSource
 
     /// Direct switch dispatch on the hot path — no protocol witness call.
     private var transport: FrameTransport {
@@ -109,25 +162,30 @@ final class AppModel: ObservableObject {
 
     /// Periodic state poll while connected via USB Serial so the status icons stay live.
     private var firmwareStatePollTimer: DispatchSourceTimer?
+    private var remoteKeepAliveTimer: DispatchSourceTimer?
 
     init() {
+        remoteVideo = RemoteUDPVideoSource(displayLayer: capture.displayLayer)
         setupMouseTimer()
         setupVideoDeviceWatcher()
         setupSerialPollTimer()
         setupFirmwareStatePollTimer()
+        setupRemoteKeepAliveTimer()
         let errHandler: (String) -> Void = { [weak self] message in
             DispatchQueue.main.async { self?.lastSerialError = message }
         }
         serial.onConnectionChanged = { [weak self] connected in
             DispatchQueue.main.async {
-                self?.isConnected = connected
+                guard let self else { return }
+                guard self.connectionMode == .local else { return }
+                self.isConnected = connected
                 if !connected {
-                    self?.captureInput = false
-                    self?.blePinIsLive = false      // PIN value is now stale (cached)
-                    self?.hidMountedOnTarget = false
-                    self?.bleClientConnected = false
+                    self.captureInput = false
+                    self.blePinIsLive = false      // PIN value is now stale (cached)
+                    self.hidMountedOnTarget = false
+                    self.bleClientConnected = false
                 } else {
-                    self?.requestFirmwareState()    // populate PIN + BLE state
+                    self.requestFirmwareState()    // populate PIN + BLE state
                 }
             }
         }
@@ -159,8 +217,10 @@ final class AppModel: ObservableObject {
         }
         bluetooth.onConnectionChanged = { [weak self] connected in
             DispatchQueue.main.async {
-                self?.isConnected = connected
-                if !connected { self?.captureInput = false }
+                guard let self else { return }
+                guard self.connectionMode == .local else { return }
+                self.isConnected = connected
+                if !connected { self.captureInput = false }
             }
         }
         bluetooth.onError = errHandler
@@ -182,6 +242,32 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+        remoteInput.onConnectionChanged = { [weak self] connected in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard self.connectionMode == .remote else { return }
+                self.isConnected = connected
+                if !connected { self.captureInput = false }
+            }
+        }
+        remoteInput.onError = errHandler
+        remoteVideo.onConnectionChanged = { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.remoteVideoStatusText = self.remoteVideo.statusDescription
+                if !self.remoteVideo.isConnected {
+                    self.remoteVideoReceiving = false
+                }
+            }
+        }
+        remoteVideo.onReceivingChanged = { [weak self] receiving in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.remoteVideoReceiving = receiving
+                self.remoteVideoStatusText = self.remoteVideo.statusDescription
+            }
+        }
+        remoteVideo.onError = errHandler
     }
 
     deinit {
@@ -189,14 +275,25 @@ final class AppModel: ObservableObject {
         if let o = deviceDisconnectObserver { NotificationCenter.default.removeObserver(o) }
         serialPollTimer?.cancel()
         firmwareStatePollTimer?.cancel()
+        remoteKeepAliveTimer?.cancel()
         mouseTimer?.cancel()
     }
 
     // MARK: - UI helpers
-    var captureStatusOK: Bool { capture.isRunning }
-    var captureStatusText: String { capture.isRunning ? "Video OK" : "No Video" }
+    var captureStatusOK: Bool {
+        connectionMode == .local ? capture.isRunning : remoteVideoReceiving
+    }
+    var captureStatusText: String {
+        if connectionMode == .remote {
+            return remoteVideoStatusText
+        }
+        return capture.isRunning ? "Video OK" : "No Video"
+    }
     var serialStatusText: String {
-        isConnected ? transport.statusDescription : "ESP32 Disconnected"
+        if connectionMode == .remote {
+            return isConnected ? remoteInput.statusDescription : "Remote agent disconnected"
+        }
+        return isConnected ? transport.statusDescription : "ESP32 Disconnected"
     }
 
     // MARK: - Video
@@ -214,6 +311,7 @@ final class AppModel: ObservableObject {
     func selectVideoDevice(uniqueID: String) {
         let id = uniqueID
         if let device = videoDevices.first(where: { $0.uniqueID == id }) {
+            remoteVideo.disconnect()
             capture.start(device: device)
         }
     }
@@ -225,7 +323,7 @@ final class AppModel: ObservableObject {
         serialPorts = newPorts
         if selectedSerialPath.isEmpty, let first = newPorts.first { selectedSerialPath = first }
         if !selectedSerialPath.isEmpty, !newPorts.contains(selectedSerialPath) {
-            if isConnected { disconnect() }
+            if connectionMode == .local, isConnected { disconnect() }
             selectedSerialPath = newPorts.first ?? ""
         }
     }
@@ -264,7 +362,35 @@ final class AppModel: ObservableObject {
         serialPollTimer = timer
     }
 
+    private func setupRemoteKeepAliveTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + .seconds(20), repeating: .seconds(20))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.connectionMode == .remote, self.isConnected, !self.remoteSessionID.isEmpty else { return }
+            let baseURL = self.remoteBaseURL
+            let token = self.remoteAuthToken
+            let sessionID = self.remoteSessionID
+            Task {
+                do {
+                    try await self.remoteControl.keepAlive(baseURLString: baseURL, authToken: token, sessionID: sessionID)
+                } catch {
+                    await MainActor.run {
+                        self.lastSerialError = "Remote keepalive failed: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+        timer.resume()
+        remoteKeepAliveTimer = timer
+    }
+
     func connect() {
+        lastSerialError = ""
+        if connectionMode == .remote {
+            connectRemote()
+            return
+        }
         switch transportKind {
         case .usbSerial:
             guard !selectedSerialPath.isEmpty else { return }
@@ -275,7 +401,24 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func disconnect() { transport.disconnect() }
+    func disconnect() {
+        if connectionMode == .remote {
+            let baseURL = remoteBaseURL
+            let token = remoteAuthToken
+            let sessionID = remoteSessionID
+            remoteSessionID = ""
+            remoteInput.disconnect()
+            remoteVideo.disconnect()
+            remoteVideoReceiving = false
+            remoteVideoStatusText = "Remote video disconnected"
+            captureInput = false
+            if !baseURL.isEmpty, !token.isEmpty, !sessionID.isEmpty {
+                Task { await remoteControl.closeSession(baseURLString: baseURL, authToken: token, sessionID: sessionID) }
+            }
+            return
+        }
+        transport.disconnect()
+    }
 
     func startBLEScan()  { bluetooth.startScan() }
     func stopBLEScan()   { bluetooth.stopScan()  }
@@ -283,7 +426,7 @@ final class AppModel: ObservableObject {
     // MARK: - Firmware management commands (UART-only)
 
     private func sendCommand(_ type: UInt8, payload: [UInt8] = []) {
-        guard transportKind == .usbSerial, isConnected else { return }
+        guard connectionMode == .local, transportKind == .usbSerial, isConnected else { return }
         let frame = HIDEncoder.frame(type: type, payload: payload)
         serial.send(frame: frame)
     }
@@ -318,6 +461,7 @@ final class AppModel: ObservableObject {
     ///   the BLE connect — which is what triggers macOS' pairing dialog.
     func startBluetoothPairFlow() {
         if isConnected { disconnect() }
+        if connectionMode != .local { connectionMode = .local }
         selectedBLEPeripheralID = nil
         if !blePIN.isEmpty { copyPinToClipboard() }
         pairingFlowActive = true
@@ -406,8 +550,12 @@ final class AppModel: ObservableObject {
         report[1] = 0 // reserved
         let keys = Array(pressedUsages.prefix(6))
         for (i, k) in keys.enumerated() { report[2 + i] = k }
-        let frame = HIDEncoder.frame(type: 0x01, payload: report)
-        transport.send(frame: frame)
+        if connectionMode == .remote {
+            remoteInput.sendKeyboardReport(report)
+        } else {
+            let frame = HIDEncoder.frame(type: 0x01, payload: report)
+            transport.send(frame: frame)
+        }
     }
 
     // MARK: - Paste from host
@@ -439,8 +587,12 @@ final class AppModel: ObservableObject {
         var report = [UInt8](repeating: 0, count: 8)
         report[0] = modifier
         report[2] = key
-        let frame = HIDEncoder.frame(type: 0x01, payload: report)
-        transport.send(frame: frame)
+        if connectionMode == .remote {
+            remoteInput.sendKeyboardReport(report)
+        } else {
+            let frame = HIDEncoder.frame(type: 0x01, payload: report)
+            transport.send(frame: frame)
+        }
     }
 
     private func setupMouseTimer() {
@@ -465,7 +617,50 @@ final class AppModel: ObservableObject {
     }
 
     private func sendMouse(payload: [UInt8]) {
-        let frame = HIDEncoder.frame(type: 0x02, payload: payload)
-        transport.send(frame: frame)
+        if connectionMode == .remote {
+            remoteInput.sendMouseReport(payload)
+        } else {
+            let frame = HIDEncoder.frame(type: 0x02, payload: payload)
+            transport.send(frame: frame)
+        }
+    }
+
+    private func connectRemote() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let session = try await self.remoteControl.createSession(
+                    baseURLString: self.remoteBaseURL,
+                    authToken: self.remoteAuthToken
+                )
+                self.capture.stop()
+                try await self.remoteVideo.connect(configuration: .init(
+                    host: session.udpHost,
+                    port: session.videoPort,
+                    sessionID: session.sessionID,
+                    sessionKey: session.sessionKey
+                ))
+                try await self.remoteInput.connect(configuration: .init(
+                    host: session.udpHost,
+                    port: session.inputPort,
+                    sessionID: session.sessionID,
+                    sessionKey: session.sessionKey,
+                    mtu: session.mtu
+                ))
+                await MainActor.run {
+                    self.remoteSessionID = session.rawSessionID
+                    self.lastSerialError = ""
+                }
+            } catch {
+                await MainActor.run {
+                    self.remoteSessionID = ""
+                    self.lastSerialError = "Remote connect failed: \(error.localizedDescription)"
+                    self.remoteInput.disconnect()
+                    self.remoteVideo.disconnect()
+                    self.remoteVideoReceiving = false
+                    self.remoteVideoStatusText = "Remote video disconnected"
+                }
+            }
+        }
     }
 }

@@ -1,0 +1,16 @@
+[Unit]
+Description=CaptureKVM agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/capturekvm-agent
+ExecStart=/opt/capturekvm-agent/capturekvm-agent --config /etc/capturekvm-agent/config.yaml
+Restart=on-failure
+RestartSec=2
+User=capturekvm
+Group=capturekvm
+
+[Install]
+WantedBy=multi-user.target
