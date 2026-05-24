@@ -140,10 +140,10 @@ final class RemoteUDPInputSink {
         data.append(Constants.protocolVersion)
         data.append(kind)
         data.append(contentsOf: [0x00, 0x00])
-        data.append(bigEndianBytes(sessionID))
-        data.append(bigEndianBytes(sequence))
-        data.append(bigEndianBytes(UInt64(Date().timeIntervalSince1970 * 1_000_000)))
-        data.append(bigEndianBytes(UInt16(payloadLength)))
+        data.append(contentsOf: bigEndianBytes(sessionID))
+        data.append(contentsOf: bigEndianBytes(sequence))
+        data.append(contentsOf: bigEndianBytes(UInt64(Date().timeIntervalSince1970 * 1_000_000)))
+        data.append(contentsOf: bigEndianBytes(UInt16(payloadLength)))
         return data
     }
 
@@ -152,7 +152,7 @@ final class RemoteUDPInputSink {
         var nonce = Data()
         nonce.append(contentsOf: sessionBytes.dropFirst())
         nonce.append(Constants.directionClientToServer)
-        nonce.append(bigEndianBytes(sequence))
+        nonce.append(contentsOf: bigEndianBytes(sequence))
         return nonce
     }
 

@@ -344,7 +344,7 @@ struct ContentView: View {
 
     private var hidIconActive: Bool {
         if model.connectionMode == .remote { return model.isConnected }
-        model.isConnected && model.transportKind == .usbSerial && model.hidMountedOnTarget
+        return model.isConnected && model.transportKind == .usbSerial && model.hidMountedOnTarget
     }
 
     private var hidIconColor: Color {

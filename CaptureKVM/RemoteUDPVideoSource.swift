@@ -346,14 +346,15 @@ final class RemoteUDPVideoSource {
 
     private func makeFormatDescription(sps: Data, pps: Data) throws -> CMFormatDescription {
         var formatDescription: CMFormatDescription?
-        let status = sps.withUnsafeBytes { spsBuffer in
-            pps.withUnsafeBytes { ppsBuffer in
-                var parameterSetPointers: [UnsafePointer<UInt8>?] = [
-                    spsBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                    ppsBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self)
-                ]
-                let parameterSetSizes = [sps.count, pps.count]
-                return parameterSetPointers.withUnsafeMutableBufferPointer { pointerBuffer in
+        let status = sps.withUnsafeBytes { (spsBuffer: UnsafeRawBufferPointer) -> OSStatus in
+            pps.withUnsafeBytes { (ppsBuffer: UnsafeRawBufferPointer) -> OSStatus in
+                guard let spsBase = spsBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                      let ppsBase = ppsBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                    return -1
+                }
+                let parameterSetPointers: [UnsafePointer<UInt8>] = [spsBase, ppsBase]
+                let parameterSetSizes: [Int] = [sps.count, pps.count]
+                return parameterSetPointers.withUnsafeBufferPointer { pointerBuffer in
                     parameterSetSizes.withUnsafeBufferPointer { sizeBuffer in
                         CMVideoFormatDescriptionCreateFromH264ParameterSets(
                             allocator: kCFAllocatorDefault,
